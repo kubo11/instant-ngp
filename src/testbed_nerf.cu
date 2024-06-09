@@ -3166,6 +3166,10 @@ int Testbed::marching_cubes(ivec3 res3d, const BoundingBox& aabb, const mat3& re
 	return (int)(m_mesh.indices.size()/3);
 }
 
+int Testbed::marching_cubes_octree(ivec3 sample_res3d, const BoundingBox& aabb, const mat3& render_aabb_to_local, float min_density, int max_tree_height) {
+  return (int)(m_mesh.indices.size()/3);
+}
+
 uint8_t* Testbed::Nerf::get_density_grid_bitfield_mip(uint32_t mip) {
 	return density_grid_bitfield.data() + grid_mip_offset(mip)/8;
 }
