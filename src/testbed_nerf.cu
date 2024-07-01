@@ -3167,6 +3167,38 @@ int Testbed::marching_cubes(ivec3 res3d, const BoundingBox& aabb, const mat3& re
 }
 
 int Testbed::marching_cubes_octree(ivec3 sample_res3d, const BoundingBox& aabb, const mat3& render_aabb_to_local, float min_density, int max_tree_height) {
+//   if (thresh == std::numeric_limits<float>::max()) {
+//     thresh = m_mesh.thresh;
+//   }
+
+//   ivec3 node_res = {2, 2, 2};
+//   GPUMemory<float> density = get_density_on_grid(res3d, aabb, render_aabb_to_local);
+//   marching_cubes_gpu(m_stream.get(), aabb, render_aabb_to_local, res3d, thresh, density, m_mesh.verts, m_mesh.indices);
+
+//   uint32_t n_verts = (uint32_t)m_mesh.verts.size();
+//   m_mesh.verts_gradient.resize(n_verts);
+
+//   m_mesh.trainable_verts = std::make_shared<TrainableBuffer<3, 1, float>>(std::array<int, 1>{{(int)n_verts}});
+//   m_mesh.verts_gradient.copy_from_device(m_mesh.verts); // Make sure the vertices don't get destroyed in the initialization
+
+//   pcg32 rnd{m_seed};
+//   m_mesh.trainable_verts->initialize_params(rnd, (float*)m_mesh.verts.data());
+//   m_mesh.trainable_verts->set_params((float*)m_mesh.verts.data(), (float*)m_mesh.verts.data(), (float*)m_mesh.verts_gradient.data());
+//   m_mesh.verts.copy_from_device(m_mesh.verts_gradient);
+
+//   m_mesh.verts_optimizer.reset(create_optimizer<float>({
+//       {"otype", "Adam"},
+//       {"learning_rate", 1e-4},
+//       {"beta1", 0.9f},
+//       {"beta2", 0.99f},
+//   }));
+
+//   m_mesh.verts_optimizer->allocate(m_mesh.trainable_verts);
+
+//   compute_mesh_1ring(m_mesh.verts, m_mesh.indices, m_mesh.verts_smoothed, m_mesh.vert_normals);
+//   compute_mesh_vertex_colors();
+
+  
   return (int)(m_mesh.indices.size()/3);
 }
 
@@ -3273,6 +3305,21 @@ std::vector<float> Testbed::Nerf::get_rendering_extra_dims_cpu() const {
 	CUDA_CHECK_THROW(cudaMemcpy(extra_dims_cpu.data(), get_rendering_extra_dims(nullptr), rendering_extra_dims.bytes(), cudaMemcpyDeviceToHost));
 
 	return extra_dims_cpu;
+}
+
+Octree::Octree(std::unique_ptr<Node> root) : m_root(std::move(root)) {}
+
+Octree Octree::build_from_grid(std::vector<float> grid, int sample_res, int max_depth, float min_density, const BoundingBox& aabb) {
+	std::unique_ptr<Octree::Node> root = nullptr;
+
+	return Octree(std::move(root));
+}
+
+Octree::Node& Octree::Node::get_child(const BoundingBox& aabb) {
+	int idx = (int)(aabb.center().x < this->aabb.center().x) << 2 +
+			  (int)(aabb.center().y < this->aabb.center().y) << 1 +
+			  (int)(aabb.center().z < this->aabb.center().z);
+	return *children[idx];
 }
 
 }

@@ -1215,4 +1215,21 @@ public:
 	std::shared_ptr<NerfNetwork<network_precision_t>> m_nerf_network;
 };
 
+class Octree {
+public:
+  	struct Node {
+    	float density;
+    	BoundingBox aabb;
+		std::array<std::unique_ptr<Node>, 8> children;
+
+		Node& get_child(const BoundingBox& aabb);
+  	};
+
+  	static Octree build_from_grid(std::vector<float> grid, int sample_res, int max_depth, float min_density, const BoundingBox& aabb);
+private:
+  	std::unique_ptr<Node> m_root;
+
+	Octree(std::unique_ptr<Node> root);
+};
+
 }
