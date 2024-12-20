@@ -236,16 +236,36 @@ __global__ void grid_samples_half_to_float(const uint32_t n_elements, BoundingBo
 	if (i >= n_elements) return;
 
 	// let's interpolate for marching cubes based on the raw MLP output, not the density (exponentiated) version
-	//float mlp = network_to_density(float(network_output[i * padded_output_width]), density_activation);
+	// float mlp = network_to_density(float(network_output[i * padded_output_width]), density_activation);
 	float mlp = float(network_output[i]);
 
-	if (grid_in) {
-		vec3 pos = unwarp_position(coords_in[i].p, aabb);
-		float grid_density = cascaded_grid_at(pos, grid_in, mip_from_pos(pos, max_cascade));
-		if (grid_density < NERF_MIN_OPTICAL_THICKNESS()) {
-			mlp = -10000.0f;
-		}
-	}
+	mlp = 1.0f / (1.0f + expf(-mlp));
+	mlp = mlp * (1.0f - mlp);
+
+	// if (grid_in) {
+	// 	vec3 pos = unwarp_position(coords_in[i].p, aabb);
+	// 	float grid_density = cascaded_grid_at(pos, grid_in, mip_from_pos(pos, max_cascade));
+	// 	if (grid_density < NERF_MIN_OPTICAL_THICKNESS()) {
+	// 		mlp = -10000.0f;
+	// 	}
+	// }
+
+	dst[i] = mlp;
+}
+
+__global__ void grid_samples_half_to_float_activation(const uint32_t n_elements, BoundingBox aabb, float* dst, const network_precision_t* network_output, ENerfActivation density_activation, const NerfPosition* __restrict__ coords_in, const float* __restrict__ grid_in, uint32_t max_cascade, uint32_t padded_output_width) {
+	const uint32_t i = threadIdx.x + blockIdx.x * blockDim.x;
+	if (i >= n_elements) return;
+
+	float mlp = network_to_density(float(network_output[i * padded_output_width]), density_activation);
+
+	// if (grid_in) {
+	// 	vec3 pos = unwarp_position(coords_in[i].p, aabb);
+	// 	float grid_density = cascaded_grid_at(pos, grid_in, mip_from_pos(pos, max_cascade));
+	// 	if (grid_density < NERF_MIN_OPTICAL_THICKNESS()) {
+	// 		mlp = -10000.0f;
+	// 	}
+	// }
 
 	dst[i] = mlp;
 }
@@ -3138,6 +3158,43 @@ int Testbed::marching_cubes(ivec3 res3d, const BoundingBox& aabb, const mat3& re
 	}
 
 	GPUMemory<float> density = get_density_on_grid(res3d, aabb, render_aabb_to_local);
+
+	// std::vector<float> negative;
+	std::vector<float> density_cpu;
+	density_cpu.resize(density.size());
+	density.copy_to_host(density_cpu);
+	// std::string actual_path = "/home/kubo/temp/density.bin";
+	// FILE* f = native_fopen(actual_path, "wb");
+	// if (!f)
+	// 	return 0;
+	// for (int i = 0; i < density_cpu.size(); ++i) {
+	// 	float* data = (float*)&density_cpu[i];
+	// 	if (*data > -10000.0f) fwrite(data, sizeof(float), 1, f);
+	// 	if (*data < 0.0f && *data > -10000.0f) {
+	// 		negative.push_back(*data);
+	// 	}
+	// }
+	// std::cout << "Negative counter: " << negative.size() << std::endl;
+	// for (auto data : negative) {
+	// 	std::cout << data << std::endl;
+	// }
+	//fwrite(density_cpu.data(), sizeof(float), density_cpu.size(), f);
+
+	float min = 10e8;
+	float max = -10e8;
+	float avg = 0.0f;
+	float count = 0.0f;
+
+	for (auto val : density_cpu) {
+		if (val < -9999.0f) continue;
+		min = std::min(min, val);
+		max = std::max(max, val);
+		avg += val;
+		count++;
+	}
+	avg /= count;
+	std::cout << fmt::format("Min: {} Max: {} Avg: {}", min, max, avg);
+
 	marching_cubes_gpu(m_stream.get(), aabb, render_aabb_to_local, res3d, thresh, density, m_mesh.verts, m_mesh.indices);
 
 	uint32_t n_verts = (uint32_t)m_mesh.verts.size();
@@ -3166,44 +3223,44 @@ int Testbed::marching_cubes(ivec3 res3d, const BoundingBox& aabb, const mat3& re
 	return (int)(m_mesh.indices.size()/3);
 }
 
-Octree Testbed::build_octree() {
-	// get starting grid
-	// build octree from starting grid
-	// extend octree
-	// return octree
-}
+// Octree Testbed::build_octree() {
+// 	// get starting grid
+// 	// build octree from starting grid
+// 	// extend octree
+// 	// return octree
+// }
 
-int Testbed::marching_cubes_octree(ivec3 sample_res3d, const BoundingBox& aabb, const mat3& render_aabb_to_local, float min_density, int max_tree_height) {
-  Octree density =	build_octree();
-  std::vector<float> verts, indices;
-  marching_cubes_octree_cpu(aabb, render_aabb_to_local, density. verts, indices);
-  // copy verts and indices to m_mesh.verts and m_mesh.indices
+// int Testbed::marching_cubes_octree(ivec3 sample_res3d, const BoundingBox& aabb, const mat3& render_aabb_to_local, float min_density, int max_tree_height) {
+//   Octree density =	build_octree();
+//   std::vector<float> verts, indices;
+//   marching_cubes_octree_cpu(aabb, render_aabb_to_local, density. verts, indices);
+//   // copy verts and indices to m_mesh.verts and m_mesh.indices
 
-  uint32_t n_verts = (uint32_t)m_mesh.verts.size();
-  m_mesh.verts_gradient.resize(n_verts);
+//   uint32_t n_verts = (uint32_t)m_mesh.verts.size();
+//   m_mesh.verts_gradient.resize(n_verts);
 
-  m_mesh.trainable_verts = std::make_shared<TrainableBuffer<3, 1, float>>(std::array<int, 1>{{(int)n_verts}});
-  m_mesh.verts_gradient.copy_from_device(m_mesh.verts); // Make sure the vertices don't get destroyed in the initialization
+//   m_mesh.trainable_verts = std::make_shared<TrainableBuffer<3, 1, float>>(std::array<int, 1>{{(int)n_verts}});
+//   m_mesh.verts_gradient.copy_from_device(m_mesh.verts); // Make sure the vertices don't get destroyed in the initialization
 
-  pcg32 rnd{m_seed};
-  m_mesh.trainable_verts->initialize_params(rnd, (float*)m_mesh.verts.data());
-  m_mesh.trainable_verts->set_params((float*)m_mesh.verts.data(), (float*)m_mesh.verts.data(), (float*)m_mesh.verts_gradient.data());
-  m_mesh.verts.copy_from_device(m_mesh.verts_gradient);
+//   pcg32 rnd{m_seed};
+//   m_mesh.trainable_verts->initialize_params(rnd, (float*)m_mesh.verts.data());
+//   m_mesh.trainable_verts->set_params((float*)m_mesh.verts.data(), (float*)m_mesh.verts.data(), (float*)m_mesh.verts_gradient.data());
+//   m_mesh.verts.copy_from_device(m_mesh.verts_gradient);
 
-  m_mesh.verts_optimizer.reset(create_optimizer<float>({
-      {"otype", "Adam"},
-      {"learning_rate", 1e-4},
-      {"beta1", 0.9f},
-      {"beta2", 0.99f},
-  }));
+//   m_mesh.verts_optimizer.reset(create_optimizer<float>({
+//       {"otype", "Adam"},
+//       {"learning_rate", 1e-4},
+//       {"beta1", 0.9f},
+//       {"beta2", 0.99f},
+//   }));
 
-  m_mesh.verts_optimizer->allocate(m_mesh.trainable_verts);
+//   m_mesh.verts_optimizer->allocate(m_mesh.trainable_verts);
 
-  compute_mesh_1ring(m_mesh.verts, m_mesh.indices, m_mesh.verts_smoothed, m_mesh.vert_normals);
-  compute_mesh_vertex_colors();
+//   compute_mesh_1ring(m_mesh.verts, m_mesh.indices, m_mesh.verts_smoothed, m_mesh.vert_normals);
+//   compute_mesh_vertex_colors();
   
-  return (int)(m_mesh.indices.size()/3);
-}
+//   return (int)(m_mesh.indices.size()/3);
+// }
 
 uint8_t* Testbed::Nerf::get_density_grid_bitfield_mip(uint32_t mip) {
 	return density_grid_bitfield.data() + grid_mip_offset(mip)/8;
@@ -3310,31 +3367,31 @@ std::vector<float> Testbed::Nerf::get_rendering_extra_dims_cpu() const {
 	return extra_dims_cpu;
 }
 
-Octree::Octree(std::unique_ptr<Node> root) : m_root(std::move(root)) {}
+// Octree::Octree(std::unique_ptr<Node> root) : m_root(std::move(root)) {}
 
-void build(std::vector<float> grid, int sample_res, float min_density, const BoundingBox& aabb, Octree::Node& root, unsigned int depth) {
-	if (depth > sample_res) return;
-	// get grid idx
-	// if idx out of bounds return
-	// get density
-	// if density too low return
-	// create node
-}
+// void build(std::vector<float> grid, int sample_res, float min_density, const BoundingBox& aabb, Octree::Node& root, unsigned int depth) {
+// 	if (depth > sample_res) return;
+// 	// get grid idx
+// 	// if idx out of bounds return
+// 	// get density
+// 	// if density too low return
+// 	// create node
+// }
 
-Octree Octree::build_from_grid(std::vector<float> grid, int sample_res, int max_depth, float min_density, const BoundingBox& aabb) {
-	std::unique_ptr<Octree::Node> root = std::make_unique<Octree::Node>();
-	int rounded_res = next_multiple(sample_res, 2);
+// Octree Octree::build_from_grid(std::vector<float> grid, int sample_res, int max_depth, float min_density, const BoundingBox& aabb) {
+// 	std::unique_ptr<Octree::Node> root = std::make_unique<Octree::Node>();
+// 	int rounded_res = next_multiple(sample_res, 2);
 
-	build(grid, rounded_res, min_density, aabb, *root, 0);
+// 	build(grid, rounded_res, min_density, aabb, *root, 0);
 
-	return Octree(std::move(root));
-}
+// 	return Octree(std::move(root));
+// }
 
-Octree::Node& Octree::Node::get_child(const BoundingBox& aabb) {
-	int idx = (int)(aabb.center().x < this->aabb.center().x) << 2 +
-			  (int)(aabb.center().y < this->aabb.center().y) << 1 +
-			  (int)(aabb.center().z < this->aabb.center().z);
-	return *children[idx];
-}
+// Octree::Node& Octree::Node::get_child(const BoundingBox& aabb) {
+// 	int idx = (int)(aabb.center().x < this->aabb.center().x) << 2 +
+// 			  (int)(aabb.center().y < this->aabb.center().y) << 1 +
+// 			  (int)(aabb.center().z < this->aabb.center().z);
+// 	return *children[idx];
+// }
 
 }

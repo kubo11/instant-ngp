@@ -1672,38 +1672,38 @@ void Testbed::imgui() {
 		}
 	}
 
-	if (m_testbed_mode == ETestbedMode::Nerf) {
-		if (ImGui::CollapsingHeader("Export mesh - octree")) {
-			static int sample_res = 4, max_height = 8;
-			static float min_density = 0.5f;
+	// if (m_testbed_mode == ETestbedMode::Nerf) {
+	// 	if (ImGui::CollapsingHeader("Export mesh - octree")) {
+	// 		static int sample_res = 4, max_height = 8;
+	// 		static float min_density = 0.5f;
 
-			if (imgui_colored_button("Mesh it!", 0.4f)) {
-				marching_cubes_octree(ivec3(sample_res), m_render_aabb, m_render_aabb_to_local, min_density, max_height);
-				m_nerf.render_with_lens_distortion = false;
-			}
-			if (m_mesh.indices.size()>0) {
-				ImGui::SameLine();
-				if (imgui_colored_button("Clear Mesh", 0.f)) {
-					m_mesh.clear();
-				}
-			}
+	// 		if (imgui_colored_button("Mesh it!", 0.4f)) {
+	// 			marching_cubes_octree(ivec3(sample_res), m_render_aabb, m_render_aabb_to_local, min_density, max_height);
+	// 			m_nerf.render_with_lens_distortion = false;
+	// 		}
+	// 		if (m_mesh.indices.size()>0) {
+	// 			ImGui::SameLine();
+	// 			if (imgui_colored_button("Clear Mesh", 0.f)) {
+	// 				m_mesh.clear();
+	// 			}
+	// 		}
 
-			ImGui::SliderInt("Sample res", &sample_res, 1, 16, "%d", ImGuiSliderFlags_Logarithmic);
-			ImGui::SliderInt("Max octree height", &max_height, 1, 16, "%d", ImGuiSliderFlags_Logarithmic);
-			float min_density_range = 10.f;
-			ImGui::SliderFloat("Octree density threshold", &min_density, -min_density_range, min_density_range);
+	// 		ImGui::SliderInt("Sample res", &sample_res, 1, 16, "%d", ImGuiSliderFlags_Logarithmic);
+	// 		ImGui::SliderInt("Max octree height", &max_height, 1, 16, "%d", ImGuiSliderFlags_Logarithmic);
+	// 		float min_density_range = 10.f;
+	// 		ImGui::SliderFloat("Octree density threshold", &min_density, -min_density_range, min_density_range);
 		
-			ImGui::Combo("Mesh render mode", (int*)&m_mesh_render_mode, "Off\0Vertex Colors\0Vertex Normals\0\0");
-			if (uint32_t tricount = m_mesh.indices.size()/3) {
-				ImGui::InputText("##OBJFile", m_imgui.mesh_path, sizeof(m_imgui.mesh_path));
-				if (ImGui::Button("Save it!")) {
-					save_mesh(m_mesh.verts, m_mesh.vert_normals, m_mesh.vert_colors, m_mesh.indices, m_imgui.mesh_path, m_mesh.unwrap, m_nerf.training.dataset.scale, m_nerf.training.dataset.offset);
-				}
-				ImGui::SameLine();
-				ImGui::Text("Mesh has %d triangles\n", tricount);
-			}
-		}
-	}
+	// 		ImGui::Combo("Mesh render mode", (int*)&m_mesh_render_mode, "Off\0Vertex Colors\0Vertex Normals\0\0");
+	// 		if (uint32_t tricount = m_mesh.indices.size()/3) {
+	// 			ImGui::InputText("##OBJFile", m_imgui.mesh_path, sizeof(m_imgui.mesh_path));
+	// 			if (ImGui::Button("Save it!")) {
+	// 				save_mesh(m_mesh.verts, m_mesh.vert_normals, m_mesh.vert_colors, m_mesh.indices, m_imgui.mesh_path, m_mesh.unwrap, m_nerf.training.dataset.scale, m_nerf.training.dataset.offset);
+	// 			}
+	// 			ImGui::SameLine();
+	// 			ImGui::Text("Mesh has %d triangles\n", tricount);
+	// 		}
+	// 	}
+	// }
 
 	if (m_testbed_mode == ETestbedMode::Sdf) {
 		if (ImGui::CollapsingHeader("BRDF parameters")) {
