@@ -3223,12 +3223,12 @@ int Testbed::marching_cubes(ivec3 res3d, const BoundingBox& aabb, const mat3& re
 	return (int)(m_mesh.indices.size()/3);
 }
 
-// Octree Testbed::build_octree() {
-// 	// get starting grid
-// 	// build octree from starting grid
-// 	// extend octree
-// 	// return octree
-// }
+Octree Testbed::build_octree() {
+	// get starting grid
+	// build octree from starting grid
+	// extend octree
+	// return octree
+}
 
 // int Testbed::marching_cubes_octree(ivec3 sample_res3d, const BoundingBox& aabb, const mat3& render_aabb_to_local, float min_density, int max_tree_height) {
 //   Octree density =	build_octree();
@@ -3367,31 +3367,31 @@ std::vector<float> Testbed::Nerf::get_rendering_extra_dims_cpu() const {
 	return extra_dims_cpu;
 }
 
-// Octree::Octree(std::unique_ptr<Node> root) : m_root(std::move(root)) {}
+Octree::Octree(std::unique_ptr<Node> root) : m_root(std::move(root)) {}
 
-// void build(std::vector<float> grid, int sample_res, float min_density, const BoundingBox& aabb, Octree::Node& root, unsigned int depth) {
-// 	if (depth > sample_res) return;
-// 	// get grid idx
-// 	// if idx out of bounds return
-// 	// get density
-// 	// if density too low return
-// 	// create node
-// }
+void build(std::vector<float> grid, int sample_res, int max_depth, float min_density, const BoundingBox& aabb, Octree::Node& root, unsigned int depth) {
+	if (depth > max_depth) return;
+	// get grid idx
+	// if idx out of bounds return
+	// get density
+	// if density too low return
+	// create node
+}
 
-// Octree Octree::build_from_grid(std::vector<float> grid, int sample_res, int max_depth, float min_density, const BoundingBox& aabb) {
-// 	std::unique_ptr<Octree::Node> root = std::make_unique<Octree::Node>();
-// 	int rounded_res = next_multiple(sample_res, 2);
+Octree Octree::build_from_grid(std::vector<float> grid, int sample_res, int max_depth, float min_density, const BoundingBox& aabb) {
+	std::unique_ptr<Octree::Node> root = std::make_unique<Octree::Node>();
+	int rounded_res = next_multiple(sample_res, 2);
 
-// 	build(grid, rounded_res, min_density, aabb, *root, 0);
+	build(grid, rounded_res, min_density, aabb, *root, 0);
 
-// 	return Octree(std::move(root));
-// }
+	return Octree(std::move(root));
+}
 
-// Octree::Node& Octree::Node::get_child(const BoundingBox& aabb) {
-// 	int idx = (int)(aabb.center().x < this->aabb.center().x) << 2 +
-// 			  (int)(aabb.center().y < this->aabb.center().y) << 1 +
-// 			  (int)(aabb.center().z < this->aabb.center().z);
-// 	return *children[idx];
-// }
+std::optional<Octree::Node&> Octree::Node::get_child(const BoundingBox& aabb) {
+	int idx = (int)(aabb.center().x < this->aabb.center().x) << 2 +
+			  (int)(aabb.center().y < this->aabb.center().y) << 1 +
+			  (int)(aabb.center().z < this->aabb.center().z);
+	return (children[idx]) ? std::optional<Octree::Node&>(*children[idx]) : std::nullopt;
+}
 
 }
