@@ -1224,6 +1224,9 @@ public:
 		std::array<std::unique_ptr<Node>, 8> children;
 
 		std::optional<Node&> get_child(const BoundingBox& aabb);
+		std::optional<Node&> get_child(unsigned int x, unsigned int y, unsigned int z);
+
+		bool empty() const;
   	};
 
   	static Octree build_from_grid(std::vector<float> grid, int sample_res, int max_depth, float min_density, const BoundingBox& aabb);

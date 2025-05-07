@@ -3369,8 +3369,43 @@ std::vector<float> Testbed::Nerf::get_rendering_extra_dims_cpu() const {
 
 Octree::Octree(std::unique_ptr<Node> root) : m_root(std::move(root)) {}
 
+void build_tree_structure(Octree::Node& root, unsigned int depth) {
+	if (depth < 2) return;
+	for (auto& child : root.children) {
+		child = std::make_unique<Octree::Node>();
+		build_tree_structure(*child, depth << 1);
+	}
+}
+
+void assign_leaf_value(Octree::Node& root, float value, unsigned int x, unsigned int y, unsigned int z, unsigned int resolution) {
+	std::reference_wrapper<Octree::Node> current_node = root;
+	resolution<<=1;
+	while (resolution > 1) {
+		current_node = current_node.get().get_child(x / resolution, y / resolution, z / resolution).value();
+		resolution<<=1;
+	}
+	current_node.get().get_child(x % 2, y % 2, z % 2).value().density = value;
+}
+
+void update_tree(Octree::Node& root) {
+	root.density = 0.0f;
+	for (auto& child : root.children) {
+		update_tree(*child);
+		if (child->empty()) child.reset();
+		else root.density += child->density;
+	}
+	root.density /= 8.0f;
+}
+
 void build(std::vector<float> grid, int sample_res, int max_depth, float min_density, const BoundingBox& aabb, Octree::Node& root, unsigned int depth) {
 	if (depth > max_depth) return;
+	
+	build_tree_structure(root, sample_res);
+	for (unsigned int i = 0; i < grid.size(); ++i) {
+		assign_leaf_value(root, grid[i], i % (sample_res * sample_res), i / sample_res % sample_res, i / (sample_res * sample_res), sample_res);
+	}
+	update_tree(root);
+
 	// get grid idx
 	// if idx out of bounds return
 	// get density
@@ -3382,7 +3417,7 @@ Octree Octree::build_from_grid(std::vector<float> grid, int sample_res, int max_
 	std::unique_ptr<Octree::Node> root = std::make_unique<Octree::Node>();
 	int rounded_res = next_multiple(sample_res, 2);
 
-	build(grid, rounded_res, min_density, aabb, *root, 0);
+	build(grid, rounded_res, max_depth, min_density, aabb, *root, 0);
 
 	return Octree(std::move(root));
 }
@@ -3391,7 +3426,19 @@ std::optional<Octree::Node&> Octree::Node::get_child(const BoundingBox& aabb) {
 	int idx = (int)(aabb.center().x < this->aabb.center().x) << 2 +
 			  (int)(aabb.center().y < this->aabb.center().y) << 1 +
 			  (int)(aabb.center().z < this->aabb.center().z);
-	return (children[idx]) ? std::optional<Octree::Node&>(*children[idx]) : std::nullopt;
+	if (!children[idx]) return std::nullopt;
+	return (children[idx]->aabb.center() == aabb.center()) ?
+		std::optional<Octree::Node&>(*children[idx]) : children[idx]->get_child(aabb); 
+}
+
+std::optional<Octree::Node&> Octree::Node::get_child(unsigned int x, unsigned int y, unsigned int z) {
+	return (x >= 0 && x <= 1 && y >= 0 && y <= 1 && z >= 0 && z <= 1 && children[x << 2 + y << 1 + z]) ?
+		std::optional<Octree::Node&>(*children[x << 2 + y << 1 + z]) : std::nullopt;
+}
+
+bool Octree::Node::empty() const {
+	return !children[0] && !children[1] && !children[2] && !children[3] && 
+		   !children[4] && !children[5] && !children[6] && !children[7];
 }
 
 }
