@@ -3223,44 +3223,55 @@ int Testbed::marching_cubes(ivec3 res3d, const BoundingBox& aabb, const mat3& re
 	return (int)(m_mesh.indices.size()/3);
 }
 
-Octree Testbed::build_octree() {
-	// get starting grid
-	// build octree from starting grid
-	// extend octree
-	// return octree
+Octree extend_tree(Octree::Node& root, float min_density) {
+	if (root.empty() && root.density > min_density) {
+		// get grid
+		root = Octree::build_from_grid();
+	}
+	for (auto& child : root.children) {
+		if (child) extend_tree(*child, min_density);
+	}
 }
 
-// int Testbed::marching_cubes_octree(ivec3 sample_res3d, const BoundingBox& aabb, const mat3& render_aabb_to_local, float min_density, int max_tree_height) {
-//   Octree density =	build_octree();
-//   std::vector<float> verts, indices;
-//   marching_cubes_octree_cpu(aabb, render_aabb_to_local, density. verts, indices);
-//   // copy verts and indices to m_mesh.verts and m_mesh.indices
+Octree Testbed::build_octree() {
+	// get grid
+	auto root = Octree::build_from_grid();
+	
+	extend_tree(root, min_density);
+	return root;
+}
 
-//   uint32_t n_verts = (uint32_t)m_mesh.verts.size();
-//   m_mesh.verts_gradient.resize(n_verts);
+int Testbed::marching_cubes_octree(ivec3 sample_res3d, const BoundingBox& aabb, const mat3& render_aabb_to_local, float min_density, int max_tree_height) {
+  Octree density =	build_octree();
+  std::vector<float> verts, indices;
+  marching_cubes_octree_cpu(aabb, render_aabb_to_local, density. verts, indices);
+  // copy verts and indices to m_mesh.verts and m_mesh.indices
 
-//   m_mesh.trainable_verts = std::make_shared<TrainableBuffer<3, 1, float>>(std::array<int, 1>{{(int)n_verts}});
-//   m_mesh.verts_gradient.copy_from_device(m_mesh.verts); // Make sure the vertices don't get destroyed in the initialization
+  uint32_t n_verts = (uint32_t)m_mesh.verts.size();
+  m_mesh.verts_gradient.resize(n_verts);
 
-//   pcg32 rnd{m_seed};
-//   m_mesh.trainable_verts->initialize_params(rnd, (float*)m_mesh.verts.data());
-//   m_mesh.trainable_verts->set_params((float*)m_mesh.verts.data(), (float*)m_mesh.verts.data(), (float*)m_mesh.verts_gradient.data());
-//   m_mesh.verts.copy_from_device(m_mesh.verts_gradient);
+  m_mesh.trainable_verts = std::make_shared<TrainableBuffer<3, 1, float>>(std::array<int, 1>{{(int)n_verts}});
+  m_mesh.verts_gradient.copy_from_device(m_mesh.verts); // Make sure the vertices don't get destroyed in the initialization
 
-//   m_mesh.verts_optimizer.reset(create_optimizer<float>({
-//       {"otype", "Adam"},
-//       {"learning_rate", 1e-4},
-//       {"beta1", 0.9f},
-//       {"beta2", 0.99f},
-//   }));
+  pcg32 rnd{m_seed};
+  m_mesh.trainable_verts->initialize_params(rnd, (float*)m_mesh.verts.data());
+  m_mesh.trainable_verts->set_params((float*)m_mesh.verts.data(), (float*)m_mesh.verts.data(), (float*)m_mesh.verts_gradient.data());
+  m_mesh.verts.copy_from_device(m_mesh.verts_gradient);
 
-//   m_mesh.verts_optimizer->allocate(m_mesh.trainable_verts);
+  m_mesh.verts_optimizer.reset(create_optimizer<float>({
+      {"otype", "Adam"},
+      {"learning_rate", 1e-4},
+      {"beta1", 0.9f},
+      {"beta2", 0.99f},
+  }));
 
-//   compute_mesh_1ring(m_mesh.verts, m_mesh.indices, m_mesh.verts_smoothed, m_mesh.vert_normals);
-//   compute_mesh_vertex_colors();
+  m_mesh.verts_optimizer->allocate(m_mesh.trainable_verts);
+
+  compute_mesh_1ring(m_mesh.verts, m_mesh.indices, m_mesh.verts_smoothed, m_mesh.vert_normals);
+  compute_mesh_vertex_colors();
   
-//   return (int)(m_mesh.indices.size()/3);
-// }
+  return (int)(m_mesh.indices.size()/3);
+}
 
 uint8_t* Testbed::Nerf::get_density_grid_bitfield_mip(uint32_t mip) {
 	return density_grid_bitfield.data() + grid_mip_offset(mip)/8;
