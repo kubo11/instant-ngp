@@ -19,11 +19,15 @@
 
 #include <tiny-cuda-nn/common.h>
 
+#include <testbed.h>
+
 namespace ngp {
 
 ivec3 get_marching_cubes_res(uint32_t res_1d, const BoundingBox& render_aabb);
 
 void marching_cubes_gpu(cudaStream_t stream, BoundingBox render_aabb, mat3 render_aabb_to_local, ivec3 res_3d, float thresh, const GPUMemory<float>& density, GPUMemory<vec3>& vert_out, GPUMemory<uint32_t>& indices_out);
+
+void marching_cubes_octree_cpu(BoundingBox render_aabb, mat3 render_aabb_to_local, ivec3 res_3d, float thresh, const DensityOctree& density, std::vector<vec3>& verts_out, std::vector<unsigned int>& indices_out);
 
 // computes the average of the 1ring of all verts, as homogenous coordinates
 void compute_mesh_1ring(const GPUMemory<vec3>& verts, const GPUMemory<uint32_t>& indices, GPUMemory<vec4>& output_pos, GPUMemory<vec3>& output_normals);

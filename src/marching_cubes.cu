@@ -802,6 +802,10 @@ void marching_cubes_gpu(cudaStream_t stream, BoundingBox render_aabb, mat3 rende
 	gen_faces<<<blocks, threads, 0>>>(res_3d, density.data(), vertex_grid, indices_out.data(), thresh, counters.data()+2);
 }
 
+void marching_cubes_octree_cpu(BoundingBox render_aabb, mat3 render_aabb_to_local, ivec3 res_3d, float thresh, const DensityOctree& density, std::vector<vec3>& verts_out, std::vector<unsigned int>& indices_out) {
+
+}
+
 void save_mesh(
 	GPUMemory<vec3>& verts,
 	GPUMemory<vec3>& normals,

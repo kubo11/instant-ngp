@@ -442,7 +442,7 @@ public:
 	GPUMemory<float> get_sdf_gt_on_grid(ivec3 res3d, const BoundingBox& aabb, const mat3& render_aabb_to_local); // sdf gt version (sdf only)
 	GPUMemory<vec4> get_rgba_on_grid(ivec3 res3d, vec3 ray_dir, bool voxel_centers, float depth, bool density_as_alpha = false);
 	int marching_cubes(ivec3 res3d, const BoundingBox& render_aabb, const mat3& render_aabb_to_local, float thresh);
-	Octree build_octree();
+	DensityOctree build_density_octree(ivec3 sample_res3d, const BoundingBox& aabb, const mat3& render_aabb_to_local, float min_density, int max_tree_height);
     int marching_cubes_octree(ivec3 sample_res3d, const BoundingBox& aabb, const mat3& render_aabb_to_local, float min_density, int max_tree_height);
 
 	float get_depth_from_renderbuffer(const CudaRenderBuffer& render_buffer, const vec2& uv);
@@ -1216,7 +1216,7 @@ public:
 	std::shared_ptr<NerfNetwork<network_precision_t>> m_nerf_network;
 };
 
-class Octree {
+class DensityOctree {
 public:
   	struct Node {
     	float density;
@@ -1226,16 +1226,18 @@ public:
 		std::optional<Node&> get_child(const BoundingBox& aabb);
 		std::optional<Node&> get_child(unsigned int x, unsigned int y, unsigned int z);
 
+		Node();
+
 		bool empty() const;
   	};
 
-  	static Octree build_from_grid(std::vector<float> grid, int sample_res, int max_depth, float min_density, const BoundingBox& aabb);
+  	static std::unique_ptr<DensityOctree::Node> build_subtree_from_grid(const std::vector<float>& grid, const BoundingBox& aabb, ivec3 res3d, float min_density);
 private:
   	std::unique_ptr<Node> m_root;
 
-	Octree(std::unique_ptr<Node> root);
+	DensityOctree();
 
-	friend Octree Testbed::build_octree(void);
+	friend DensityOctree Testbed::build_density_octree(ivec3 sample_res3d, const BoundingBox& aabb, const mat3& render_aabb_to_local, float min_density, int max_tree_height);
 };
 
 }

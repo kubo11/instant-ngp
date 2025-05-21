@@ -3223,29 +3223,37 @@ int Testbed::marching_cubes(ivec3 res3d, const BoundingBox& aabb, const mat3& re
 	return (int)(m_mesh.indices.size()/3);
 }
 
-Octree extend_tree(Octree::Node& root, float min_density) {
-	if (root.empty() && root.density > min_density) {
-		// get grid
-		root = Octree::build_from_grid();
+DensityOctree extend_tree(std::unique_ptr<DensityOctree::Node>& root, ivec3 res3d, const mat3& render_aabb_to_local, float min_density) {
+	res3d.x = next_multiple((unsigned int)res3d.x, 16u);
+	res3d.y = next_multiple((unsigned int)res3d.y, 16u);
+	res3d.z = next_multiple((unsigned int)res3d.z, 16u);
+
+	if (root->empty() && root->density > min_density) {
+		GPUMemory<float> device_density = get_density_on_grid(res3d, root->aabb, render_aabb_to_local);
+		std::vector<float> host_density;
+		device_density.copy_to_host(host_density);
+		root = DensityOctree::build_subtree_from_grid(host_density, root->aabb, res3d, min_density);
 	}
-	for (auto& child : root.children) {
-		if (child) extend_tree(*child, min_density);
+	for (auto& child : root->children) {
+		if (child) extend_tree(child, res3d, render_aabb_to_local, min_density);
 	}
 }
 
-Octree Testbed::build_octree() {
-	// get grid
-	auto root = Octree::build_from_grid();
+DensityOctree Testbed::build_density_octree(ivec3 sample_res3d, const BoundingBox& aabb, const mat3& render_aabb_to_local, float min_density, int max_tree_height) {
+	DensityOctree density_octree;
+	density_octree.m_root->aabb = aabb;
 	
-	extend_tree(root, min_density);
-	return root;
+	extend_tree(density_octree.m_root, sample_res3d, render_aabb_to_local, min_density);
+	return density_octree;
 }
 
 int Testbed::marching_cubes_octree(ivec3 sample_res3d, const BoundingBox& aabb, const mat3& render_aabb_to_local, float min_density, int max_tree_height) {
-  Octree density =	build_octree();
-  std::vector<float> verts, indices;
-  marching_cubes_octree_cpu(aabb, render_aabb_to_local, density. verts, indices);
-  // copy verts and indices to m_mesh.verts and m_mesh.indices
+  DensityOctree density_octree = build_density_octree(sample_res3d, aabb, render_aabb_to_local, min_density, max_tree_height);
+  std::vector<vec3> verts; 
+  std::vector<unsigned int> indices;
+  marching_cubes_octree_cpu(aabb, render_aabb_to_local, density_octree, verts, indices);
+  m_mesh.verts.copy_from_host(verts);
+  m_mesh.indices.copy_from_host(indices);
 
   uint32_t n_verts = (uint32_t)m_mesh.verts.size();
   m_mesh.verts_gradient.resize(n_verts);
@@ -3378,19 +3386,23 @@ std::vector<float> Testbed::Nerf::get_rendering_extra_dims_cpu() const {
 	return extra_dims_cpu;
 }
 
-Octree::Octree(std::unique_ptr<Node> root) : m_root(std::move(root)) {}
+DensityOctree::DensityOctree() : m_root{std::make_unique<DensityOctree::Node>()} {}
 
-void build_tree_structure(Octree::Node& root, unsigned int depth) {
+DensityOctree::Node::Node() : density{0.0f}, aabb{} {
+	children.fill(nullptr);
+}
+
+void build_tree_structure(DensityOctree::Node& root, unsigned int depth) {
 	if (depth < 2) return;
 	for (auto& child : root.children) {
-		child = std::make_unique<Octree::Node>();
+		child = std::make_unique<DensityOctree::Node>();
 		build_tree_structure(*child, depth << 1);
 	}
 }
 
-void assign_leaf_value(Octree::Node& root, float value, unsigned int x, unsigned int y, unsigned int z, unsigned int resolution) {
-	std::reference_wrapper<Octree::Node> current_node = root;
-	resolution<<=1;
+void assign_leaf_value(DensityOctree::Node& root, float value, unsigned int x, unsigned int y, unsigned int z, ivec3 res3d) {
+	std::reference_wrapper<DensityOctree::Node> current_node = root;
+	unsigned int resolution = std::max(res3d.x, res3d.y, res3d.z )<< 1;
 	while (resolution > 1) {
 		current_node = current_node.get().get_child(x / resolution, y / resolution, z / resolution).value();
 		resolution<<=1;
@@ -3398,7 +3410,7 @@ void assign_leaf_value(Octree::Node& root, float value, unsigned int x, unsigned
 	current_node.get().get_child(x % 2, y % 2, z % 2).value().density = value;
 }
 
-void update_tree(Octree::Node& root) {
+void update_tree(DensityOctree::Node& root) {
 	root.density = 0.0f;
 	for (auto& child : root.children) {
 		update_tree(*child);
@@ -3408,46 +3420,40 @@ void update_tree(Octree::Node& root) {
 	root.density /= 8.0f;
 }
 
-void build(std::vector<float> grid, int sample_res, int max_depth, float min_density, const BoundingBox& aabb, Octree::Node& root, unsigned int depth) {
-	if (depth > max_depth) return;
-	
-	build_tree_structure(root, sample_res);
+std::unique_ptr<DensityOctree::Node> DensityOctree::build_subtree_from_grid(const std::vector<float>& grid, const BoundingBox& aabb, ivec3 res3d, float min_density) {
+	std::unique_ptr<DensityOctree::Node> root = std::make_unique<DensityOctree::Node>();
+	root->aabb = aabb;
+
+	build_tree_structure(*root, std::max(res3d.x, res3d.y, res3d.z));
 	for (unsigned int i = 0; i < grid.size(); ++i) {
-		assign_leaf_value(root, grid[i], i % (sample_res * sample_res), i / sample_res % sample_res, i / (sample_res * sample_res), sample_res);
+		assign_leaf_value(*root, grid[i], i % (res3d.x * res3d.y), i / res3d.x % res3d.y, i / (res3d.x * res3d.y), res3d);
 	}
-	update_tree(root);
+	update_tree(*root);
 
 	// get grid idx
 	// if idx out of bounds return
 	// get density
 	// if density too low return
 	// create node
+
+	return std::move(root);
 }
 
-Octree Octree::build_from_grid(std::vector<float> grid, int sample_res, int max_depth, float min_density, const BoundingBox& aabb) {
-	std::unique_ptr<Octree::Node> root = std::make_unique<Octree::Node>();
-	int rounded_res = next_multiple(sample_res, 2);
-
-	build(grid, rounded_res, max_depth, min_density, aabb, *root, 0);
-
-	return Octree(std::move(root));
-}
-
-std::optional<Octree::Node&> Octree::Node::get_child(const BoundingBox& aabb) {
+std::optional<DensityOctree::Node&> DensityOctree::Node::get_child(const BoundingBox& aabb) {
 	int idx = (int)(aabb.center().x < this->aabb.center().x) << 2 +
 			  (int)(aabb.center().y < this->aabb.center().y) << 1 +
 			  (int)(aabb.center().z < this->aabb.center().z);
 	if (!children[idx]) return std::nullopt;
 	return (children[idx]->aabb.center() == aabb.center()) ?
-		std::optional<Octree::Node&>(*children[idx]) : children[idx]->get_child(aabb); 
+		std::optional<DensityOctree::Node&>(*children[idx]) : children[idx]->get_child(aabb); 
 }
 
-std::optional<Octree::Node&> Octree::Node::get_child(unsigned int x, unsigned int y, unsigned int z) {
+std::optional<DensityOctree::Node&> DensityOctree::Node::get_child(unsigned int x, unsigned int y, unsigned int z) {
 	return (x >= 0 && x <= 1 && y >= 0 && y <= 1 && z >= 0 && z <= 1 && children[x << 2 + y << 1 + z]) ?
-		std::optional<Octree::Node&>(*children[x << 2 + y << 1 + z]) : std::nullopt;
+		std::optional<DensityOctree::Node&>(*children[x << 2 + y << 1 + z]) : std::nullopt;
 }
 
-bool Octree::Node::empty() const {
+bool DensityOctree::Node::empty() const {
 	return !children[0] && !children[1] && !children[2] && !children[3] && 
 		   !children[4] && !children[5] && !children[6] && !children[7];
 }
