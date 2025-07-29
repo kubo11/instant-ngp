@@ -3161,26 +3161,9 @@ int Testbed::marching_cubes(ivec3 res3d, const BoundingBox& aabb, const mat3& re
 
 	GPUMemory<float> density = get_density_on_grid(res3d, aabb, render_aabb_to_local);
 
-	// std::vector<float> negative;
 	std::vector<float> density_cpu;
 	density_cpu.resize(density.size());
 	density.copy_to_host(density_cpu);
-	// std::string actual_path = "/home/kubo/temp/density.bin";
-	// FILE* f = native_fopen(actual_path, "wb");
-	// if (!f)
-	// 	return 0;
-	// for (int i = 0; i < density_cpu.size(); ++i) {
-	// 	float* data = (float*)&density_cpu[i];
-	// 	if (*data > -10000.0f) fwrite(data, sizeof(float), 1, f);
-	// 	if (*data < 0.0f && *data > -10000.0f) {
-	// 		negative.push_back(*data);
-	// 	}
-	// }
-	// std::cout << "Negative counter: " << negative.size() << std::endl;
-	// for (auto data : negative) {
-	// 	std::cout << data << std::endl;
-	// }
-	//fwrite(density_cpu.data(), sizeof(float), density_cpu.size(), f);
 
 	float min = 10e8;
 	float max = -10e8;
