@@ -18,6 +18,7 @@
 #include <neural-graphics-primitives/camera_path.h>
 #include <neural-graphics-primitives/common.h>
 #include <neural-graphics-primitives/discrete_distribution.h>
+#include <neural-graphics-primitives/marching_cubes.h>
 #include <neural-graphics-primitives/nerf.h>
 #include <neural-graphics-primitives/nerf_loader.h>
 #include <neural-graphics-primitives/render_buffer.h>
@@ -442,8 +443,9 @@ public:
 	GPUMemory<float> get_sdf_gt_on_grid(ivec3 res3d, const BoundingBox& aabb, const mat3& render_aabb_to_local); // sdf gt version (sdf only)
 	GPUMemory<vec4> get_rgba_on_grid(ivec3 res3d, vec3 ray_dir, bool voxel_centers, float depth, bool density_as_alpha = false);
 	int marching_cubes(ivec3 res3d, const BoundingBox& render_aabb, const mat3& render_aabb_to_local, float thresh);
-	DensityOctree build_density_octree(ivec3 sample_res3d, const BoundingBox& aabb, const mat3& render_aabb_to_local, float min_density, int max_tree_height);
-    int marching_cubes_octree(ivec3 sample_res3d, const BoundingBox& aabb, const mat3& render_aabb_to_local, float min_density, int max_tree_height);
+	void extend_tree(std::queue<std::reference_wrapper<DensityOctree::Node>>& extendible_nodes, int res, const mat3& render_aabb_to_local, float min_density, int max_tree_height);
+	DensityOctree build_density_octree(int sample_res, const BoundingBox& aabb, const mat3& render_aabb_to_local, float min_density, int max_tree_height);
+    int marching_cubes_octree(int sample_res, const BoundingBox& aabb, const mat3& render_aabb_to_local, float min_density, int max_tree_height);
 
 	float get_depth_from_renderbuffer(const CudaRenderBuffer& render_buffer, const vec2& uv);
 	vec3 get_3d_pos_from_pixel(const CudaRenderBuffer& render_buffer, const vec2& focus_pixel);
@@ -1214,30 +1216,6 @@ public:
 	} m_distortion;
 
 	std::shared_ptr<NerfNetwork<network_precision_t>> m_nerf_network;
-};
-
-class DensityOctree {
-public:
-  	struct Node {
-    	float density;
-    	BoundingBox aabb;
-		std::array<std::unique_ptr<Node>, 8> children;
-
-		std::optional<Node&> get_child(const BoundingBox& aabb);
-		std::optional<Node&> get_child(unsigned int x, unsigned int y, unsigned int z);
-
-		Node();
-
-		bool empty() const;
-  	};
-
-  	static std::unique_ptr<DensityOctree::Node> build_subtree_from_grid(const std::vector<float>& grid, const BoundingBox& aabb, ivec3 res3d, float min_density);
-private:
-  	std::unique_ptr<Node> m_root;
-
-	DensityOctree();
-
-	friend DensityOctree Testbed::build_density_octree(ivec3 sample_res3d, const BoundingBox& aabb, const mat3& render_aabb_to_local, float min_density, int max_tree_height);
 };
 
 }

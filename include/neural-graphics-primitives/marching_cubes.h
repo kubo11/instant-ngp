@@ -19,15 +19,13 @@
 
 #include <tiny-cuda-nn/common.h>
 
-#include <testbed.h>
+#include <queue>
 
 namespace ngp {
 
 ivec3 get_marching_cubes_res(uint32_t res_1d, const BoundingBox& render_aabb);
 
 void marching_cubes_gpu(cudaStream_t stream, BoundingBox render_aabb, mat3 render_aabb_to_local, ivec3 res_3d, float thresh, const GPUMemory<float>& density, GPUMemory<vec3>& vert_out, GPUMemory<uint32_t>& indices_out);
-
-void marching_cubes_octree_cpu(BoundingBox render_aabb, mat3 render_aabb_to_local, ivec3 res_3d, float thresh, const DensityOctree& density, std::vector<vec3>& verts_out, std::vector<unsigned int>& indices_out);
 
 // computes the average of the 1ring of all verts, as homogenous coordinates
 void compute_mesh_1ring(const GPUMemory<vec3>& verts, const GPUMemory<uint32_t>& indices, GPUMemory<vec4>& output_pos, GPUMemory<vec3>& output_normals);
@@ -78,5 +76,55 @@ bool check_shader(uint32_t handle, const char* desc, bool program);
 void save_density_grid_to_png(const GPUMemory<float>& density, const fs::path& path, ivec3 res3d, float thresh, bool swap_y_z = true, float density_range = 4.f);
 void save_rgba_grid_to_png_sequence(const GPUMemory<vec4>& rgba, const fs::path& path, ivec3 res3d, bool swap_y_z = true);
 void save_rgba_grid_to_raw_file(const GPUMemory<vec4>& rgba, const fs::path& path, ivec3 res3d, bool swap_y_z, int cascade);
+
+vec3 vertex_interp(float iso, vec3 p1, vec3 p2, float d1, float d2);
+
+struct MCMesh {
+	std::vector<vec3> vertices;
+	std::vector<unsigned int> indices;
+};
+
+class DensityOctree {
+public:
+	static float s_initial_size;
+	static vec3 s_initial_origin;
+	static std::array<vec3, 8> s_corner_offsets;
+	static std::array<std::array<int, 2>, 12> s_edge_connections;
+	static float s_min_density;
+
+  	struct Node {
+		vec3 origin;
+		float size;
+
+		std::unique_ptr<std::array<float, 8>> corner_densities;
+		std::array<std::unique_ptr<Node>, 8> children;
+
+		Node();
+		Node(vec3 origin, float size);
+
+		void extend(std::vector<float>& vertices, int res, std::queue<std::reference_wrapper<DensityOctree::Node>>& extendible_nodes);
+
+		bool is_leaf() const;
+		void traverse(const std::function<void(const Node&)>& fun) const;
+		float sample_density(vec3 pos) const;
+		void polygonize_leaf_node(MCMesh mesh, float iso) const;
+
+	private:
+		void extend(std::vector<float>& vertices, int res, int curr_res, ivec3 pos, std::queue<std::reference_wrapper<DensityOctree::Node>>& extedible_nodes);
+  	};
+
+	static DensityOctree init(vec3 origin, float size);
+
+	DensityOctree::Node& get_root();
+	void traverse(const std::function<void(const Node&)>& fun) const;
+	float sample_density(vec3 pos) const;
+
+	MCMesh polygonize(float iso) const;
+
+private:
+  	Node m_root;
+
+	DensityOctree(Node&& root);
+};
 
 }
