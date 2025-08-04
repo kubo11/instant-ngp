@@ -3208,35 +3208,35 @@ int Testbed::marching_cubes(ivec3 res3d, const BoundingBox& aabb, const mat3& re
 	return (int)(m_mesh.indices.size()/3);
 }
 
-void Testbed::extend_tree(std::queue<std::reference_wrapper<DensityOctree::Node>>& extendible_nodes, int res, const mat3& render_aabb_to_local, float min_density, int max_tree_height) {
-	while (!extendible_nodes.empty()) {
-		auto& node = extendible_nodes.front();
-		extendible_nodes.pop();
+void Testbed::extend_tree(DensityOctree::ExtendibleQueue& extendibles, int res, const mat3& render_aabb_to_local, float min_density, int max_tree_height) {
+	while (!extendibles.empty()) {
+		auto& node = extendibles.front().get();
+		extendibles.pop();
 
-		auto aabb = BoundingBox(node.get().origin, node.get().origin+vec3(node.get().size));
+		auto aabb = BoundingBox(node.origin, node.origin+vec3(node.size));
 		GPUMemory<float> device_density = get_density_on_grid(ivec3(res, res, res), aabb, render_aabb_to_local);
 		std::vector<float> host_density;
 		host_density.resize(device_density.size());
 		device_density.copy_to_host(host_density);		
 
-		node.get().extend(host_density, res, extendible_nodes);
+		node.extend(host_density, res, max_tree_height, min_density, extendibles);
 	}
 }
 
 DensityOctree Testbed::build_density_octree(int sample_res, const BoundingBox& aabb, const mat3& render_aabb_to_local, float min_density, int max_tree_height) {
 	sample_res = next_multiple((unsigned int)sample_res, 2u);
 	auto density_octree = DensityOctree::init(aabb.min, aabb.max.x-aabb.min.x);
-	std::queue<std::reference_wrapper<DensityOctree::Node>> extendible_nodes{};
+	DensityOctree::ExtendibleQueue extendibles{};
 
-	extendible_nodes.push(density_octree.get_root());
+	extendibles.push(density_octree.get_root());
 	
-	extend_tree(extendible_nodes, sample_res, render_aabb_to_local, min_density, max_tree_height);
+	extend_tree(extendibles, sample_res, render_aabb_to_local, min_density, max_tree_height);
 	return density_octree;
 }
 
 int Testbed::marching_cubes_octree(int sample_res, const BoundingBox& aabb, const mat3& render_aabb_to_local, float min_density, int max_tree_height) {
   auto density_octree = build_density_octree(sample_res, aabb, render_aabb_to_local, min_density, max_tree_height);
-  auto mesh = density_octree.polygonize(0.5/* TODO */);
+  auto mesh = density_octree.polygonize(min_density/* TODO */);
   for (auto& vert : mesh.vertices) {
 	vert = transpose(render_aabb_to_local) * vert;
   }

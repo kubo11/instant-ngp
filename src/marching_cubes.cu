@@ -1115,8 +1115,6 @@ vec3 vertex_interp(float iso, vec3 p1, vec3 p2, float d1, float d2) {
     return p1 + t * (p2 - p1);
 }
 
-float DensityOctree::s_initial_size = 1.0f;
-vec3 DensityOctree::s_initial_origin = vec3(-1.0f, -1.0f, 1.0f);
 std::array<vec3, 8> DensityOctree::s_corner_offsets = {{
 	{0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 0.0f}, {0.0f, 1.0f, 0.0f},
     {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 1.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f, 1.0f}
@@ -1133,61 +1131,48 @@ DensityOctree DensityOctree::init(vec3 origin, float size) {
 	return DensityOctree(std::move(Node(origin, size)));
 }
 
-DensityOctree::Node::Node() : origin{0.0f, 0.0f, 0.0f}, size{0.0f}, corner_densities{}, children{} {}
+DensityOctree::Node::Node() : origin{0.0f, 0.0f, 0.0f}, size{0.0f}, density{0.0f}, children{nullptr} {}
 
-DensityOctree::Node::Node(vec3 center, float size) : origin{center}, size{size}, corner_densities{}, children{} {} 
+DensityOctree::Node::Node(vec3 center, float size) : origin{center}, size{size}, density{0.0f}, children{nullptr} {} 
 
-void DensityOctree::Node::extend(std::vector<float>& vertices, int res, std::queue<std::reference_wrapper<DensityOctree::Node>>& extedible_nodes) {
-	int half_res = res / 2;
-	float half_size = size / 2.0f;
-	int counter = 0;
-
-	for (auto x : {0, half_res}) {
-		for (auto y : {0, half_res}) {
-			for (auto z : {0, half_res}) {
-				vec3 pos = origin + vec3((x > 0) ? half_size : 0.0f, (y > 0) ? half_size : 0.0f, (z > 0) ? half_size : 0.0f);
-				children[counter] = std::make_unique<DensityOctree::Node>(pos, half_size);
-				children[counter]->extend(vertices, res, half_res, ivec3(x, y, z), extedible_nodes);
-				counter++;
-			}
-		}
-	}
+bool DensityOctree::Node::is_leaf() const {
+	return children == nullptr;
 }
 
-void DensityOctree::Node::extend(std::vector<float>& vertices, int res, int curr_res, ivec3 pos, std::queue<std::reference_wrapper<DensityOctree::Node>>& extedible_nodes) {
+bool DensityOctree::Node::is_empty() const {
+	return children != nullptr || density > s_min_density;
+}
+
+void DensityOctree::Node::extend(std::vector<float>& vertices, int res, int max_tree_height, int min_density, ExtendibleQueue& extendibles) {
+	extend(vertices, res, res, origin, 0, max_tree_height, min_density, extendibles);
+}
+
+void DensityOctree::Node::extend(std::vector<float>& vertices, int res, int curr_res, ivec3 pos, int depth, int max_tree_height, int min_density, ExtendibleQueue& extendibles) {
 	int half_res = curr_res / 2;
 	float half_size = size / 2.0f;
 	int counter = 0;
+	float average_density = 0.0f;
 	
-	if (curr_res == 2) {
-		bool extendible = false;
-		corner_densities = std::make_unique<std::array<float, 8>>();
-		for (auto x : {0, half_res}) {
-			for (auto y : {0, half_res}) {
-				for (auto z : {0, half_res}) {
-					(*corner_densities)[counter] = vertices[res * res * (pos.x + x) + res * (pos.y + y) + (pos.z + x)];
-					if ((*corner_densities)[counter] > 0.5/* TODO */) extendible = true;
-				}
-			}
-		}
-		if (extendible) extedible_nodes.push(*this);
+	if (curr_res == 1) {
+		density = vertices[res * res * pos.x + res * pos.y + pos.z];
+		if (density > min_density && depth < max_tree_height/* TODO condition*/) extendibles.push(*this);
 		return;
 	}
 
+	children = std::make_unique<std::array<DensityOctree::Node, 8>>();
 	for (auto x : {0, half_res}) {
 		for (auto y : {0, half_res}) {
 			for (auto z : {0, half_res}) {
-				vec3 pos = origin + vec3((x > 0) ? half_size : 0.0f, (y > 0) ? half_size : 0.0f, (z > 0) ? half_size : 0.0f);
-				children[counter] = std::make_unique<DensityOctree::Node>(pos, half_size);
-				children[counter]->extend(vertices, res, half_res, ivec3(x, y, z), extedible_nodes);
+				(*children)[counter].origin = origin + vec3((x > 0) ? half_size : 0.0f, (y > 0) ? half_size : 0.0f, (z > 0) ? half_size : 0.0f);
+				(*children)[counter].size = size / 2.0f;
+				(*children)[counter].extend(vertices, res, half_res, ivec3(pos.x + x, pos.y + y, pos.z + z), depth + 1, max_tree_height, min_density, extendibles);
+				average_density += (*children)[counter].density;
 				counter++;
 			}
 		}
 	}
-}
-
-bool DensityOctree::Node::is_leaf() const {
-	return corner_densities != nullptr;
+	density = average_density / 8.0f;
+	if (depth > max_tree_height) children = nullptr;
 }
 
 DensityOctree::Node& DensityOctree::get_root() {
@@ -1199,10 +1184,10 @@ void DensityOctree::traverse(const std::function<void(const Node&)>& fun) const 
 }
 
 void DensityOctree::Node::traverse(const std::function<void(const Node&)>& fun) const {
-	for (auto& node : children) {
-		if (node != nullptr) {
-			node->traverse(fun);
-		}
+	fun(*this);
+	if (children == nullptr) return;
+	for (auto& node : *children) {
+		node.traverse(fun);
 	}
 }
 
@@ -1211,40 +1196,44 @@ float DensityOctree::sample_density(vec3 pos) const {
 }
 
 float DensityOctree::Node::sample_density(vec3 pos) const {
-	if (pos.x < origin.x / 2.0f || pos.x > origin.x + size ||
-		pos.y < origin.y / 2.0f || pos.y > origin.y + size ||
-		pos.z < origin.z / 2.0f || pos.z > origin.z + size) {
+	if (pos.x < origin.x || pos.x > origin.x + size ||
+		pos.y < origin.y || pos.y > origin.y + size ||
+		pos.z < origin.z || pos.z > origin.z + size) {
 		return s_min_density;
 	}
 
-	if (is_leaf()) {
-        vec3 local = (pos - origin) / size;
-
-        float d00 = (*corner_densities)[0] * (1.0f - local.x) + (*corner_densities)[1] * local.x;
-        float d01 = (*corner_densities)[3] * (1.0f - local.x) + (*corner_densities)[2] * local.x;
-        float d10 = (*corner_densities)[4] * (1.0f - local.x) + (*corner_densities)[5] * local.x;
-        float d11 = (*corner_densities)[7] * (1.0f - local.x) + (*corner_densities)[6] * local.x;
-
-        float d0 = d00 * (1.0f - local.y) + d01 * local.y;
-        float d1 = d10 * (1.0f - local.y) + d11 * local.y;
-
-        return d0 * (1.0 - local.z) + d1 * local.z;
-	}
+	if (children == nullptr) return s_min_density;
 
     int child_idx = 0;
     if (pos.x >= origin.x + size / 2.0f) child_idx |= 1;
     if (pos.y >= origin.y + size / 2.0f) child_idx |= 2;
     if (pos.z >= origin.z + size / 2.0f) child_idx |= 4;
 
-	if (children[child_idx] == nullptr) return s_min_density;
-	return children[child_idx]->sample_density(pos);
+	if (!(*children)[child_idx].is_leaf()) return (*children)[child_idx].sample_density(pos);
+
+	vec3 local = (pos - origin) / size;
+
+	float d00 = (*children)[0].density * (1.0f - local.x) + (*children)[1].density * local.x;
+	float d01 = (*children)[3].density * (1.0f - local.x) + (*children)[2].density * local.x;
+	float d10 = (*children)[4].density * (1.0f - local.x) + (*children)[5].density * local.x;
+	float d11 = (*children)[7].density * (1.0f - local.x) + (*children)[6].density * local.x;
+
+	float d0 = d00 * (1.0f - local.y) + d01 * local.y;
+	float d1 = d10 * (1.0f - local.y) + d11 * local.y;
+
+	return d0 * (1.0 - local.z) + d1 * local.z;
 }
 
 MCMesh DensityOctree::polygonize(float iso) const {
 	MCMesh mesh{};
 
 	traverse([&mesh, &iso](const Node& node) {
-		if (node.is_leaf()) node.polygonize_leaf_node(mesh, iso);
+		if (node.is_leaf()) return;
+		bool is_polygonizable = false;
+		for (auto& child : (*node.children)) {
+			is_polygonizable |= (child.is_leaf() && !child.is_empty());
+		}
+		if (is_polygonizable) node.polygonize(mesh, iso);
 	});
 
 	return mesh;
@@ -1530,16 +1519,18 @@ static constexpr int8_t triangle_table[256][16] =
 	{-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}
 };
 
-void DensityOctree::Node::polygonize_leaf_node(MCMesh mesh, float iso) const {
-    vec3 corner_pos[8];
+void DensityOctree::Node::polygonize(MCMesh mesh, float iso) const {
+    std::array<vec3, 8> corner_pos;
+	std::array<float, 8> corner_densities;
 
     for (int i = 0; i < 8; ++i) {
         corner_pos[i] = origin + size * s_corner_offsets[i];
+		corner_densities[i] = (*children)[i].density;
     }
 
     int cubeIndex = 0;
     for (int i = 0; i < 8; i++) {
-        if ((*corner_densities)[i] < iso)
+        if (corner_densities[i] < iso)
             cubeIndex |= (1 << i);
     }
 
@@ -1551,7 +1542,7 @@ void DensityOctree::Node::polygonize_leaf_node(MCMesh mesh, float iso) const {
         if (edge_table[cubeIndex] & (1 << i)) {
             int a = s_edge_connections[i][0];
             int b = s_edge_connections[i][1];
-            vertList[i] = vertex_interp(iso, corner_pos[a], corner_pos[b], (*corner_densities)[a], (*corner_densities)[b]);
+            vertList[i] = vertex_interp(iso, corner_pos[a], corner_pos[b], corner_densities[a], corner_densities[b]);
         }
     }
 

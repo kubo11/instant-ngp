@@ -84,33 +84,39 @@ struct MCMesh {
 	std::vector<unsigned int> indices;
 };
 
+// Extend with DFS:
+// - sample leaf subspace
+// - construct subtree bottom-up
+// - depending on condition and depth: prune, extend or set min-density and exit
 class DensityOctree {
 public:
-	static float s_initial_size;
-	static vec3 s_initial_origin;
 	static std::array<vec3, 8> s_corner_offsets;
 	static std::array<std::array<int, 2>, 12> s_edge_connections;
 	static float s_min_density;
+
+	struct Node;
+	using ExtendibleQueue = std::queue<std::reference_wrapper<DensityOctree::Node>>;
 
   	struct Node {
 		vec3 origin;
 		float size;
 
-		std::unique_ptr<std::array<float, 8>> corner_densities;
-		std::array<std::unique_ptr<Node>, 8> children;
+		float density;
+		std::unique_ptr<std::array<Node, 8>> children;
 
 		Node();
 		Node(vec3 origin, float size);
 
-		void extend(std::vector<float>& vertices, int res, std::queue<std::reference_wrapper<DensityOctree::Node>>& extendible_nodes);
-
 		bool is_leaf() const;
+		bool is_empty() const;
+
+		void extend(std::vector<float>& vertices, int res, int max_tree_height, int min_density, ExtendibleQueue& extendibles);
 		void traverse(const std::function<void(const Node&)>& fun) const;
 		float sample_density(vec3 pos) const;
-		void polygonize_leaf_node(MCMesh mesh, float iso) const;
+		void polygonize(MCMesh mesh, float iso) const;
 
 	private:
-		void extend(std::vector<float>& vertices, int res, int curr_res, ivec3 pos, std::queue<std::reference_wrapper<DensityOctree::Node>>& extedible_nodes);
+		void extend(std::vector<float>& vertices, int res, int curr_res, ivec3 pos, int depth, int max_tree_height, int min_density, ExtendibleQueue& extendibles);
   	};
 
 	static DensityOctree init(vec3 origin, float size);
