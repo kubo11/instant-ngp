@@ -3210,16 +3210,16 @@ int Testbed::marching_cubes(ivec3 res3d, const BoundingBox& aabb, const mat3& re
 
 void Testbed::extend_tree(DensityOctree::ExtendibleQueue& extendibles, int res, const mat3& render_aabb_to_local, float min_density, int max_tree_height) {
 	while (!extendibles.empty()) {
-		auto& node = extendibles.front().get();
+		auto [node, depth] = extendibles.front();
 		extendibles.pop();
 
-		auto aabb = BoundingBox(node.origin, node.origin+vec3(node.size));
+		auto aabb = BoundingBox(node.get().origin, node.get().origin+vec3(node.get().size));
 		GPUMemory<float> device_density = get_density_on_grid(ivec3(res, res, res), aabb, render_aabb_to_local);
 		std::vector<float> host_density;
 		host_density.resize(device_density.size());
 		device_density.copy_to_host(host_density);		
 
-		node.extend(host_density, res, max_tree_height, min_density, extendibles);
+		node.get().extend(host_density, res, depth, max_tree_height, min_density, extendibles);
 	}
 }
 
@@ -3228,7 +3228,7 @@ DensityOctree Testbed::build_density_octree(int sample_res, const BoundingBox& a
 	auto density_octree = DensityOctree::init(aabb.min, aabb.max.x-aabb.min.x);
 	DensityOctree::ExtendibleQueue extendibles{};
 
-	extendibles.push(density_octree.get_root());
+	extendibles.push({density_octree.get_root(), 0});
 	
 	extend_tree(extendibles, sample_res, render_aabb_to_local, min_density, max_tree_height);
 	return density_octree;
@@ -3240,7 +3240,9 @@ int Testbed::marching_cubes_octree(int sample_res, const BoundingBox& aabb, cons
   for (auto& vert : mesh.vertices) {
 	vert = transpose(render_aabb_to_local) * vert;
   }
+  m_mesh.verts.resize(mesh.vertices.size());
   m_mesh.verts.copy_from_host(mesh.vertices);
+  m_mesh.indices.resize(mesh.indices.size());
   m_mesh.indices.copy_from_host(mesh.indices);
 
   uint32_t n_verts = (uint32_t)m_mesh.verts.size();
@@ -3264,7 +3266,7 @@ int Testbed::marching_cubes_octree(int sample_res, const BoundingBox& aabb, cons
   m_mesh.verts_optimizer->allocate(m_mesh.trainable_verts);
 
   compute_mesh_1ring(m_mesh.verts, m_mesh.indices, m_mesh.verts_smoothed, m_mesh.vert_normals);
-  compute_mesh_vertex_colors();
+//   compute_mesh_vertex_colors();
   
   return (int)(m_mesh.indices.size()/3);
 }

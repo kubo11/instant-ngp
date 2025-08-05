@@ -95,7 +95,7 @@ public:
 	static float s_min_density;
 
 	struct Node;
-	using ExtendibleQueue = std::queue<std::reference_wrapper<DensityOctree::Node>>;
+	using ExtendibleQueue = std::queue<std::pair<std::reference_wrapper<DensityOctree::Node>, int>>;
 
   	struct Node {
 		vec3 origin;
@@ -110,13 +110,13 @@ public:
 		bool is_leaf() const;
 		bool is_empty() const;
 
-		void extend(std::vector<float>& vertices, int res, int max_tree_height, int min_density, ExtendibleQueue& extendibles);
+		void extend(std::vector<float>& vertices, int res, int depth, int max_tree_height, float min_density, ExtendibleQueue& extendibles);
 		void traverse(const std::function<void(const Node&)>& fun) const;
 		float sample_density(vec3 pos) const;
-		void polygonize(MCMesh mesh, float iso) const;
+		void polygonize(MCMesh& mesh, float iso) const;
 
 	private:
-		void extend(std::vector<float>& vertices, int res, int curr_res, ivec3 pos, int depth, int max_tree_height, int min_density, ExtendibleQueue& extendibles);
+		void extend(std::vector<float>& vertices, int res, int curr_res, ivec3 pos, int depth, int max_tree_height, float min_density, ExtendibleQueue& extendibles);
   	};
 
 	static DensityOctree init(vec3 origin, float size);

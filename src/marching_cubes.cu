@@ -1140,14 +1140,14 @@ bool DensityOctree::Node::is_leaf() const {
 }
 
 bool DensityOctree::Node::is_empty() const {
-	return children != nullptr || density > s_min_density;
+	return density < s_min_density;
 }
 
-void DensityOctree::Node::extend(std::vector<float>& vertices, int res, int max_tree_height, int min_density, ExtendibleQueue& extendibles) {
-	extend(vertices, res, res, origin, 0, max_tree_height, min_density, extendibles);
+void DensityOctree::Node::extend(std::vector<float>& vertices, int res, int depth, int max_tree_height, float min_density, ExtendibleQueue& extendibles) {
+	extend(vertices, res, res, origin, depth, max_tree_height, min_density, extendibles);
 }
 
-void DensityOctree::Node::extend(std::vector<float>& vertices, int res, int curr_res, ivec3 pos, int depth, int max_tree_height, int min_density, ExtendibleQueue& extendibles) {
+void DensityOctree::Node::extend(std::vector<float>& vertices, int res, int curr_res, ivec3 pos, int depth, int max_tree_height, float min_density, ExtendibleQueue& extendibles) {
 	int half_res = curr_res / 2;
 	float half_size = size / 2.0f;
 	int counter = 0;
@@ -1155,7 +1155,7 @@ void DensityOctree::Node::extend(std::vector<float>& vertices, int res, int curr
 	
 	if (curr_res == 1) {
 		density = vertices[res * res * pos.x + res * pos.y + pos.z];
-		if (density > min_density && depth < max_tree_height/* TODO condition*/) extendibles.push(*this);
+		if (density > min_density && depth < max_tree_height/* TODO condition*/) extendibles.push({*this, depth});
 		return;
 	}
 
@@ -1229,9 +1229,9 @@ MCMesh DensityOctree::polygonize(float iso) const {
 
 	traverse([&mesh, &iso](const Node& node) {
 		if (node.is_leaf()) return;
-		bool is_polygonizable = false;
+		bool is_polygonizable = true;
 		for (auto& child : (*node.children)) {
-			is_polygonizable |= (child.is_leaf() && !child.is_empty());
+			is_polygonizable &= (child.is_leaf() && !child.is_empty());
 		}
 		if (is_polygonizable) node.polygonize(mesh, iso);
 	});
@@ -1519,7 +1519,7 @@ static constexpr int8_t triangle_table[256][16] =
 	{-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}
 };
 
-void DensityOctree::Node::polygonize(MCMesh mesh, float iso) const {
+void DensityOctree::Node::polygonize(MCMesh& mesh, float iso) const {
     std::array<vec3, 8> corner_pos;
 	std::array<float, 8> corner_densities;
 

@@ -1674,8 +1674,8 @@ void Testbed::imgui() {
 
 	if (m_testbed_mode == ETestbedMode::Nerf) {
 		if (ImGui::CollapsingHeader("Export mesh - octree")) {
-			static int sample_res = 4, max_height = 6;
-			static float min_density = 2.5f;
+			static int sample_res = 8, max_height = 5;
+			static float min_density = 0.216f;
 
 			if (imgui_colored_button("Mesh it!", 0.4f)) {
 				marching_cubes_octree(sample_res, m_render_aabb, m_render_aabb_to_local, min_density, max_height);
@@ -1688,7 +1688,7 @@ void Testbed::imgui() {
 				}
 			}
 
-			ImGui::SliderInt("Sample res", &sample_res, 1, 16, "%d", ImGuiSliderFlags_Logarithmic);
+			ImGui::SliderInt("Sample res", &sample_res, 8, 16, "%d", ImGuiSliderFlags_Logarithmic);
 			ImGui::SliderInt("Max octree height", &max_height, 1, 10, "%d", ImGuiSliderFlags_Logarithmic);
 			float min_density_range = 10.f;
 			ImGui::SliderFloat("Octree density threshold", &min_density, -min_density_range, min_density_range);
