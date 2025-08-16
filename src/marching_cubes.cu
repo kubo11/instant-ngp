@@ -1111,14 +1111,17 @@ void save_rgba_grid_to_raw_file(const GPUMemory<vec4>& rgba, const fs::path& pat
 }
 
 vec3 vertex_interp(float iso, vec3 p1, vec3 p2, float d1, float d2) {
-    float t = (iso - d1) / (d2 - d1 + 1e-6f);
+    float t = (iso - d1) / (d2 - d1 + 1e-9f);
     return p1 + t * (p2 - p1);
 }
 
 std::array<vec3, 8> DensityOctree::s_corner_offsets = {{
 	{0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 0.0f}, {0.0f, 1.0f, 0.0f},
-    {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 1.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f, 1.0f}
+	{0.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 1.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f, 1.0f}
 }};
+std::array<int, 8> DensityOctree::s_corner_mapping = {
+	0, 1, 3, 2, 4, 5, 7, 6
+};
 std::array<std::array<int, 2>, 12> DensityOctree::s_edge_connections = {{
 	{0,1}, {1,2}, {2,3}, {3,0}, {4,5}, {5,6},
 	{6,7}, {7,4}, {0,4}, {1,5}, {2,6}, {3,7}
@@ -1154,22 +1157,18 @@ void DensityOctree::Node::extend(std::vector<float>& vertices, int res, int curr
 	float average_density = 0.0f;
 	
 	if (curr_res == 1) {
-		density = vertices[res * res * pos.x + res * pos.y + pos.z];
+		density = vertices[pos.x + res * pos.y + res * res * pos.z];
 		if (density > min_density && depth < max_tree_height/* TODO condition*/) extendibles.push({*this, depth});
 		return;
 	}
 
 	children = std::make_unique<std::array<DensityOctree::Node, 8>>();
-	for (auto x : {0, half_res}) {
-		for (auto y : {0, half_res}) {
-			for (auto z : {0, half_res}) {
-				(*children)[counter].origin = origin + vec3((x > 0) ? half_size : 0.0f, (y > 0) ? half_size : 0.0f, (z > 0) ? half_size : 0.0f);
-				(*children)[counter].size = size / 2.0f;
-				(*children)[counter].extend(vertices, res, half_res, ivec3(pos.x + x, pos.y + y, pos.z + z), depth + 1, max_tree_height, min_density, extendibles);
-				average_density += (*children)[counter].density;
-				counter++;
-			}
-		}
+	for (auto& offset : s_corner_offsets) {
+		(*children)[counter].origin = origin + offset * half_size;
+		(*children)[counter].size = size / 2.0f;
+		(*children)[counter].extend(vertices, res, half_res, pos + ivec3(offset) * half_res, depth + 1, max_tree_height, min_density, extendibles);
+		average_density += (*children)[counter].density;
+		counter++;
 	}
 	density = average_density / 8.0f;
 	if (depth > max_tree_height) children = nullptr;
@@ -1179,11 +1178,11 @@ DensityOctree::Node& DensityOctree::get_root() {
 	return m_root;
 }
 
-void DensityOctree::traverse(const std::function<void(const Node&)>& fun) const {
+void DensityOctree::traverse(const std::function<void(Node&)>& fun) {
 	m_root.traverse(fun);
 }
 
-void DensityOctree::Node::traverse(const std::function<void(const Node&)>& fun) const {
+void DensityOctree::Node::traverse(const std::function<void(Node&)>& fun) {
 	fun(*this);
 	if (children == nullptr) return;
 	for (auto& node : *children) {
@@ -1191,23 +1190,24 @@ void DensityOctree::Node::traverse(const std::function<void(const Node&)>& fun) 
 	}
 }
 
-float DensityOctree::sample_density(vec3 pos) const {
+float DensityOctree::sample_density(vec3 pos) {
 	return m_root.sample_density(pos);
 }
 
-float DensityOctree::Node::sample_density(vec3 pos) const {
+float DensityOctree::Node::sample_density(vec3 pos) {
 	if (pos.x < origin.x || pos.x > origin.x + size ||
 		pos.y < origin.y || pos.y > origin.y + size ||
 		pos.z < origin.z || pos.z > origin.z + size) {
 		return s_min_density;
 	}
 
-	if (children == nullptr) return s_min_density;
+	if (children == nullptr) return density;
 
     int child_idx = 0;
     if (pos.x >= origin.x + size / 2.0f) child_idx |= 1;
     if (pos.y >= origin.y + size / 2.0f) child_idx |= 2;
     if (pos.z >= origin.z + size / 2.0f) child_idx |= 4;
+	child_idx = s_corner_mapping[child_idx];
 
 	if (!(*children)[child_idx].is_leaf()) return (*children)[child_idx].sample_density(pos);
 
@@ -1224,16 +1224,11 @@ float DensityOctree::Node::sample_density(vec3 pos) const {
 	return d0 * (1.0 - local.z) + d1 * local.z;
 }
 
-MCMesh DensityOctree::polygonize(float iso) const {
+MCMesh DensityOctree::polygonize(float iso) {
 	MCMesh mesh{};
 
-	traverse([&mesh, &iso](const Node& node) {
-		if (node.is_leaf()) return;
-		bool is_polygonizable = true;
-		for (auto& child : (*node.children)) {
-			is_polygonizable &= (child.is_leaf() && !child.is_empty());
-		}
-		if (is_polygonizable) node.polygonize(mesh, iso);
+	traverse([&mesh, &iso, this](Node& node) {
+		if (node.is_leaf()) node.polygonize(mesh, iso, std::bind(&DensityOctree::sample_density, this, std::placeholders::_1));
 	});
 
 	return mesh;
@@ -1519,13 +1514,13 @@ static constexpr int8_t triangle_table[256][16] =
 	{-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}
 };
 
-void DensityOctree::Node::polygonize(MCMesh& mesh, float iso) const {
+void DensityOctree::Node::polygonize(MCMesh& mesh, float iso, const std::function<float(vec3 pos)>& sample_density) {
     std::array<vec3, 8> corner_pos;
 	std::array<float, 8> corner_densities;
 
     for (int i = 0; i < 8; ++i) {
         corner_pos[i] = origin + size * s_corner_offsets[i];
-		corner_densities[i] = (*children)[i].density;
+		corner_densities[i] = sample_density(corner_pos[i]);
     }
 
     int cubeIndex = 0;

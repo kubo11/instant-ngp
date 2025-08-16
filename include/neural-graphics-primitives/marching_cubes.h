@@ -92,6 +92,7 @@ class DensityOctree {
 public:
 	static std::array<vec3, 8> s_corner_offsets;
 	static std::array<std::array<int, 2>, 12> s_edge_connections;
+	static std::array<int, 8> s_corner_mapping;
 	static float s_min_density;
 
 	struct Node;
@@ -111,9 +112,9 @@ public:
 		bool is_empty() const;
 
 		void extend(std::vector<float>& vertices, int res, int depth, int max_tree_height, float min_density, ExtendibleQueue& extendibles);
-		void traverse(const std::function<void(const Node&)>& fun) const;
-		float sample_density(vec3 pos) const;
-		void polygonize(MCMesh& mesh, float iso) const;
+		void traverse(const std::function<void(Node&)>& fun);
+		float sample_density(vec3 pos);
+		void polygonize(MCMesh& mesh, float iso, const std::function<float(vec3 pos)>& sample_density);
 
 	private:
 		void extend(std::vector<float>& vertices, int res, int curr_res, ivec3 pos, int depth, int max_tree_height, float min_density, ExtendibleQueue& extendibles);
@@ -122,10 +123,12 @@ public:
 	static DensityOctree init(vec3 origin, float size);
 
 	DensityOctree::Node& get_root();
-	void traverse(const std::function<void(const Node&)>& fun) const;
-	float sample_density(vec3 pos) const;
+	void traverse(const std::function<void(Node&)>& fun);
+	float sample_density(vec3 pos);
+	float sample_nearest(int x, int y, int z);
+	float sample_trilinear(float nx, float ny, float nz);
 
-	MCMesh polygonize(float iso) const;
+	MCMesh polygonize(float iso);
 
 private:
   	Node m_root;
