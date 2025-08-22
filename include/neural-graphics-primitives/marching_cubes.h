@@ -95,10 +95,7 @@ public:
 	static std::array<int, 8> s_corner_mapping;
 	static float s_min_density;
 
-	struct Node;
-	using ExtendibleQueue = std::queue<std::pair<std::reference_wrapper<DensityOctree::Node>, int>>;
-
-  	struct Node {
+  struct Node {
 		vec3 origin;
 		float size;
 
@@ -111,16 +108,17 @@ public:
 		bool is_leaf() const;
 		bool is_empty() const;
 
-		void extend(std::vector<float>& vertices, int res, int depth, int max_tree_height, float min_density, ExtendibleQueue& extendibles);
+		void extend(int res, int depth, int max_tree_height, float min_density, const std::function<std::vector<float>(const vec3& origin, float size)>& get_density_on_grid);
 		void traverse(const std::function<void(Node&)>& fun);
 		float sample_density(vec3 pos);
 		void polygonize(MCMesh& mesh, float iso, const std::function<float(vec3 pos)>& sample_density);
 
 	private:
-		void extend(std::vector<float>& vertices, int res, int curr_res, ivec3 pos, int depth, int max_tree_height, float min_density, ExtendibleQueue& extendibles);
-  	};
+		void extend(int res, ivec3 pos, int depth, int max_tree_height, float min_density, const std::function<float(const ivec3&)>& get_density_by_position, const std::function<std::vector<float>(const vec3& origin, float size)>& get_density_on_grid);
+  };
 
 	static DensityOctree init(vec3 origin, float size);
+	void build(float min_density, int max_tree_height, const std::function<float(const vec3& origin, float size)>& get_density_on_grid);
 
 	DensityOctree::Node& get_root();
 	void traverse(const std::function<void(Node&)>& fun);

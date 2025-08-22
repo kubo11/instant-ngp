@@ -1134,6 +1134,10 @@ DensityOctree DensityOctree::init(vec3 origin, float size) {
 	return DensityOctree(std::move(Node(origin, size)));
 }
 
+void DensityOctree::build(float min_density, int max_tree_height, const std::function<float(const vec3& origin, float size)>& get_density_on_grid) {
+	m_root.extend(0, max_tree_height, min_density, get_density_on_grid);
+}
+
 DensityOctree::Node::Node() : origin{0.0f, 0.0f, 0.0f}, size{0.0f}, density{0.0f}, children{nullptr} {}
 
 DensityOctree::Node::Node(vec3 center, float size) : origin{center}, size{size}, density{0.0f}, children{nullptr} {} 
@@ -1146,19 +1150,35 @@ bool DensityOctree::Node::is_empty() const {
 	return density < s_min_density;
 }
 
-void DensityOctree::Node::extend(std::vector<float>& vertices, int res, int depth, int max_tree_height, float min_density, ExtendibleQueue& extendibles) {
-	extend(vertices, res, res, origin, depth, max_tree_height, min_density, extendibles);
+void DensityOctree::Node::extend(int res, int depth, int max_tree_height, float min_density, const std::function<std::vector<float>(const vec3& origin, float size)>& get_density_on_grid) {
+	auto density = get_density_on_grid(origin, size);
+	auto get_density_by_position = [&density, &res](const ivec3& pos) {
+		return density[pos.x + res * pos.y + res * res * pos.z];
+	};
+	auto leaf_nodes = std::vector<std::unique_ptr<DensityOctree::Node>>();
+	auto leaf_size = size / static_cast<float>(res);
+	leaf_nodes.reserve((res-1)*(res-1)*(res-1));
+	for(int z = 0; z < res - 1; ++z) {
+		for (int y = 0; y < res - 1; ++y) {
+			for (int x = 0; x < res - 1; ++x) {
+				leaf_nodes.push_back(std::make_unique<DensityOctree::Node>(origin+leaf_size*vec3(x, y, z), leaf_size));
+				leaf_nodes.back()->density = get_density_by_position(ivec3(x, y, z));
+				if (leaf_nodes.back()->density > min_density && depth < max_tree_height) leaf_nodes.back()->extend();
+			}
+		}
+	}
+	extend(res, ivec3(0, 0, 0), depth, max_tree_height, min_density, get_density_by_position, get_density_on_grid);
 }
 
-void DensityOctree::Node::extend(std::vector<float>& vertices, int res, int curr_res, ivec3 pos, int depth, int max_tree_height, float min_density, ExtendibleQueue& extendibles) {
-	int half_res = curr_res / 2;
+void DensityOctree::Node::extend(int res, ivec3 pos, int depth, int max_tree_height, float min_density, const std::function<float(const ivec3&)>& get_density_by_position, const std::function<std::vector<float>(const vec3& origin, float size)>& get_density_on_grid) {
+	int half_res = res / 2;
 	float half_size = size / 2.0f;
 	int counter = 0;
 	float average_density = 0.0f;
 	
-	if (curr_res == 1) {
-		density = vertices[pos.x + res * pos.y + res * res * pos.z];
-		if (density > min_density && depth < max_tree_height/* TODO condition*/) extendibles.push({*this, depth});
+	if (res == 1) {
+		density = get_density_by_position(pos);
+		if (density > min_density && depth < max_tree_height/* TODO condition*/) extend()
 		return;
 	}
 
@@ -1166,7 +1186,7 @@ void DensityOctree::Node::extend(std::vector<float>& vertices, int res, int curr
 	for (auto& offset : s_corner_offsets) {
 		(*children)[counter].origin = origin + offset * half_size;
 		(*children)[counter].size = size / 2.0f;
-		(*children)[counter].extend(vertices, res, half_res, pos + ivec3(offset) * half_res, depth + 1, max_tree_height, min_density, extendibles);
+		(*children)[counter].extend(half_res, pos + ivec3(offset) * half_res, depth + 1, max_tree_height, min_density);
 		average_density += (*children)[counter].density;
 		counter++;
 	}
