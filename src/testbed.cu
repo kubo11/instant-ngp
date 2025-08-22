@@ -1688,7 +1688,15 @@ void Testbed::imgui() {
 				}
 			}
 
-			ImGui::SliderInt("Sample res", &sample_res, 8, 16, "%d", ImGuiSliderFlags_Logarithmic);
+			ImGui::Text("Sampling resolution: ");
+			ImGui::SameLine();
+			if (ImGui::RadioButton("8", sample_res == 8)) {
+				sample_res = 8;
+			}
+			ImGui::SameLine();
+			if (ImGui::RadioButton("16", sample_res == 16)) {
+				sample_res = 16;
+			}
 			ImGui::SliderInt("Max octree height", &max_height, 1, 10, "%d", ImGuiSliderFlags_Logarithmic);
 			float min_density_range = 10.f;
 			ImGui::SliderFloat("Octree density threshold", &min_density, -min_density_range, min_density_range);
