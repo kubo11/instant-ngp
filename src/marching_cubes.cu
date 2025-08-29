@@ -1134,64 +1134,86 @@ DensityOctree DensityOctree::init(vec3 origin, float size) {
 	return DensityOctree(std::move(Node(origin, size)));
 }
 
-void DensityOctree::build(float min_density, int max_tree_height, const std::function<float(const vec3& origin, float size)>& get_density_on_grid) {
-	m_root.extend(0, max_tree_height, min_density, get_density_on_grid);
+void DensityOctree::build(int res, float min_density, int max_tree_height, const std::function<std::vector<float>(const vec3& origin, float size)>& get_density_on_grid) {
+	m_root.extend(res, 0, max_tree_height, min_density, get_density_on_grid);
 }
 
 DensityOctree::Node::Node() : origin{0.0f, 0.0f, 0.0f}, size{0.0f}, density{0.0f}, children{nullptr} {}
 
 DensityOctree::Node::Node(vec3 center, float size) : origin{center}, size{size}, density{0.0f}, children{nullptr} {} 
 
-bool DensityOctree::Node::is_leaf() const {
+bool DensityOctree::Node::is_corner() const {
 	return children == nullptr;
 }
 
-bool DensityOctree::Node::is_empty() const {
-	return density < s_min_density;
+bool DensityOctree::Node::is_leaf() const {
+	if (is_corner()) return false;
+
+	for (auto& child : *children) {
+		if (!child.is_corner()) return false;
+	}
+
+	return true;
+}
+
+bool DensityOctree::Node::is_intermediate() const {
+	return !is_corner() && !is_leaf();
 }
 
 void DensityOctree::Node::extend(int res, int depth, int max_tree_height, float min_density, const std::function<std::vector<float>(const vec3& origin, float size)>& get_density_on_grid) {
+	auto grid_res = res + 1;
 	auto density = get_density_on_grid(origin, size);
-	auto get_density_by_position = [&density, &res](const ivec3& pos) {
-		return density[pos.x + res * pos.y + res * res * pos.z];
-	};
-	auto leaf_nodes = std::vector<std::unique_ptr<DensityOctree::Node>>();
+	auto leaf_nodes = std::vector<DensityOctree::Node>();
+	leaf_nodes.reserve(res*res*res);
 	auto leaf_size = size / static_cast<float>(res);
-	leaf_nodes.reserve((res-1)*(res-1)*(res-1));
-	for(int z = 0; z < res - 1; ++z) {
-		for (int y = 0; y < res - 1; ++y) {
-			for (int x = 0; x < res - 1; ++x) {
-				leaf_nodes.push_back(std::make_unique<DensityOctree::Node>(origin+leaf_size*vec3(x, y, z), leaf_size));
-				leaf_nodes.back()->density = get_density_by_position(ivec3(x, y, z));
-				if (leaf_nodes.back()->density > min_density && depth < max_tree_height) leaf_nodes.back()->extend();
+	auto corner_size = leaf_size / 2.0f;
+	auto extension_height = static_cast<int>(std::log2(res));
+	auto leaf_depth = depth + extension_height;
+	for(int z = 0; z < res; ++z) {
+		for (int y = 0; y < res; ++y) {
+			for (int x = 0; x < res; ++x) {
+				leaf_nodes.push_back(DensityOctree::Node(origin+leaf_size*vec3(x, y, z), leaf_size));
+				leaf_nodes.back().children = std::make_unique<std::array<DensityOctree::Node, 8>>();
+				for (int i = 0; i < s_corner_offsets.size(); ++i) {
+					(*leaf_nodes.back().children)[i] = DensityOctree::Node(leaf_nodes.back().origin+corner_size*s_corner_offsets[i], corner_size);
+					auto corner_pos = ivec3(x, y, z) + ivec3(s_corner_offsets[i]);
+					(*leaf_nodes.back().children)[i].density = density[corner_pos.x + grid_res * corner_pos.y + grid_res * grid_res * corner_pos.z];
+					leaf_nodes.back().density += (*leaf_nodes.back().children)[i].density;
+				}
+				leaf_nodes.back().density /= 8.0f;
+				if (leaf_nodes.back().density > min_density && leaf_depth < max_tree_height) leaf_nodes.back().extend(res, leaf_depth, max_tree_height, min_density, get_density_on_grid);
 			}
 		}
 	}
-	extend(res, ivec3(0, 0, 0), depth, max_tree_height, min_density, get_density_by_position, get_density_on_grid);
-}
-
-void DensityOctree::Node::extend(int res, ivec3 pos, int depth, int max_tree_height, float min_density, const std::function<float(const ivec3&)>& get_density_by_position, const std::function<std::vector<float>(const vec3& origin, float size)>& get_density_on_grid) {
-	int half_res = res / 2;
-	float half_size = size / 2.0f;
-	int counter = 0;
-	float average_density = 0.0f;
-	
-	if (res == 1) {
-		density = get_density_by_position(pos);
-		if (density > min_density && depth < max_tree_height/* TODO condition*/) extend()
-		return;
+	auto current_res = res;
+	while(current_res > 2) {
+		auto half_res = current_res >> 1;
+		auto intermediate_nodes = std::vector<DensityOctree::Node>();
+		intermediate_nodes.reserve(half_res*half_res*half_res);
+		for (int z = 0; z < current_res; z+=2) {
+			for (int y = 0; y < current_res; y+=2) {
+				for (int x = 0; x < current_res; x+=2) {
+					auto& base_corner_node = leaf_nodes[x + current_res * y + current_res * current_res * z];
+					intermediate_nodes.push_back(DensityOctree::Node(base_corner_node.origin, base_corner_node.size * 2.0f));
+					intermediate_nodes.back().children = std::make_unique<std::array<DensityOctree::Node, 8>>();
+					for (int i = 0; i < s_corner_offsets.size(); ++i) {
+						auto pos = ivec3(x, y, z) + ivec3(s_corner_offsets[i]);
+						(*intermediate_nodes.back().children)[i] = std::move(leaf_nodes[pos.x + current_res * pos.y + current_res * current_res * pos.z]);
+						intermediate_nodes.back().density += (*intermediate_nodes.back().children)[i].density;
+					}
+					intermediate_nodes.back().density /= 8.0f;
+				}
+			}
+		}
+		current_res = half_res;
+		leaf_nodes = std::move(intermediate_nodes);
 	}
-
-	children = std::make_unique<std::array<DensityOctree::Node, 8>>();
-	for (auto& offset : s_corner_offsets) {
-		(*children)[counter].origin = origin + offset * half_size;
-		(*children)[counter].size = size / 2.0f;
-		(*children)[counter].extend(half_res, pos + ivec3(offset) * half_res, depth + 1, max_tree_height, min_density);
-		average_density += (*children)[counter].density;
-		counter++;
+	this->children = std::make_unique<std::array<DensityOctree::Node, 8>>();
+	for (int i = 0; i < leaf_nodes.size(); ++i) {
+		(*children)[i] = std::move(leaf_nodes[i]);
+		this->density += (*children)[i].density;
 	}
-	density = average_density / 8.0f;
-	if (depth > max_tree_height) children = nullptr;
+	this->density /= 8.0f;
 }
 
 DensityOctree::Node& DensityOctree::get_root() {
@@ -1229,7 +1251,7 @@ float DensityOctree::Node::sample_density(vec3 pos) {
     if (pos.z >= origin.z + size / 2.0f) child_idx |= 4;
 	child_idx = s_corner_mapping[child_idx];
 
-	if (!(*children)[child_idx].is_leaf()) return (*children)[child_idx].sample_density(pos);
+	if ((*children)[child_idx].is_intermediate()) return (*children)[child_idx].sample_density(pos);
 
 	vec3 local = (pos - origin) / size;
 

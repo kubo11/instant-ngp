@@ -3251,7 +3251,7 @@ DensityOctree Testbed::build_density_octree(int sample_res, const BoundingBox& a
 	};
 
 	auto density_octree = DensityOctree::init(aabb.min, aabb.max.x-aabb.min.x);	
-	density_octree.build(min_density, max_tree_height, get_density_on_grid_cpu);
+	density_octree.build(sample_res, min_density, max_tree_height, get_density_on_grid_cpu);
 
 	return density_octree;
 }
@@ -3284,8 +3284,8 @@ DensityOctree mock_density_octree() {
 }
 
 int Testbed::marching_cubes_octree(int sample_res, const BoundingBox& aabb, const mat3& render_aabb_to_local, float min_density, int max_tree_height) {
-  auto density_octree = build_density_octree(sample_res, aabb, render_aabb_to_local, min_density, max_tree_height);
-//   auto density_octree = mock_density_octree();
+//   auto density_octree = build_density_octree(sample_res, aabb, render_aabb_to_local, min_density, max_tree_height);
+  auto density_octree = mock_density_octree();
   auto mesh = density_octree.polygonize(0.001f/* TODO */);
   for (auto& vert : mesh.vertices) {
 	vert = transpose(render_aabb_to_local) * vert;
