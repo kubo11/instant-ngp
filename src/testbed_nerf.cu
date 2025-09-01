@@ -3240,14 +3240,23 @@ DensityOctree Testbed::build_density_octree(int sample_res, const BoundingBox& a
 	auto query_res = sample_res * 2;
 	auto size_multiplier = static_cast<float>(query_res) / static_cast<float>(actual_res);
 
-	auto get_density_on_grid_cpu = [this, &res=query_res, &render_aabb_to_local, &size_multiplier=size_multiplier](const vec3& origin, float size) {
+	auto get_density_on_grid_cpu = [this, &query_res, &actual_res, &render_aabb_to_local, &size_multiplier=size_multiplier](const vec3& origin, float size) {
 		auto aabb = BoundingBox(origin, origin + vec3(size_multiplier * size));
-		GPUMemory<float> device_density = get_density_on_grid(ivec3(res, res, res), aabb, render_aabb_to_local);
+		GPUMemory<float> device_density = get_density_on_grid(ivec3(query_res, query_res, query_res), aabb, render_aabb_to_local);
 		std::vector<float> host_density;
 		host_density.resize(device_density.size());
 		device_density.copy_to_host(host_density);
+		std::vector<float> final_density;
+		final_density.resize(actual_res*actual_res*actual_res);
+		for (int z = 0; z < actual_res; ++z) {
+			for (int y = 0; y < actual_res; ++y) {
+				for (int x = 0; x < actual_res; ++x) {
+					final_density[x + actual_res * y + actual_res * actual_res * z] = host_density[x + query_res * y + query_res * query_res * z];
+				}
+			}
+		}
 
-		return host_density;
+		return final_density;
 	};
 
 	auto density_octree = DensityOctree::init(aabb.min, aabb.max.x-aabb.min.x);	
@@ -3283,10 +3292,30 @@ DensityOctree mock_density_octree() {
 	return density_octree;
 }
 
+DensityOctree mock_density_octree2() {
+	auto density_octree = DensityOctree::init(vec3(0.0f, 0.0f, 0.0f), 1.0f);
+	auto get_density_on_grid = [](const vec3& origin, float size) -> std::vector<float>{
+		auto res = 9;
+		std::vector<float> density(res*res*res, 0.0f);
+		if (origin != vec3(0.0f, 0.0f, 0.0f) || size != 1.0f) return density;
+		for (int z = 2; z < 7; ++z) {
+			for (int y = 2; y < 7; ++y) {
+				for (int x = 2; x < 7; ++x) {
+					density[x + res * y + res * res * z] = 1.0f;
+				}
+			}
+		}
+		return density;
+	};
+	density_octree.get_root().extend(8, 0, 3, 0.5f, get_density_on_grid);
+
+	return density_octree;
+}
+
 int Testbed::marching_cubes_octree(int sample_res, const BoundingBox& aabb, const mat3& render_aabb_to_local, float min_density, int max_tree_height) {
-//   auto density_octree = build_density_octree(sample_res, aabb, render_aabb_to_local, min_density, max_tree_height);
-  auto density_octree = mock_density_octree();
-  auto mesh = density_octree.polygonize(0.001f/* TODO */);
+  auto density_octree = build_density_octree(sample_res, aabb, render_aabb_to_local, min_density, max_tree_height);
+//   auto density_octree = mock_density_octree2();
+  auto mesh = density_octree.polygonize(min_density/* TODO */);
   for (auto& vert : mesh.vertices) {
 	vert = transpose(render_aabb_to_local) * vert;
   }

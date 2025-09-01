@@ -1562,7 +1562,7 @@ void DensityOctree::Node::polygonize(MCMesh& mesh, float iso, const std::functio
 
     for (int i = 0; i < 8; ++i) {
         corner_pos[i] = origin + size * s_corner_offsets[i];
-		corner_densities[i] = sample_density(corner_pos[i]);
+		corner_densities[i] = (*children)[i].density;//sample_density(corner_pos[i]);
     }
 
     int cubeIndex = 0;
