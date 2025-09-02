@@ -1697,9 +1697,9 @@ void Testbed::imgui() {
 			if (ImGui::RadioButton("16", sample_res == 16)) {
 				sample_res = 16;
 			}
-			ImGui::SliderInt("Max octree height", &max_height, 1, 10, "%d", ImGuiSliderFlags_Logarithmic);
+			ImGui::SliderInt("Max octree height", &max_height, 1, 10, "%d");
 			float min_density_range = 10.f;
-			ImGui::SliderFloat("Octree density threshold", &min_density, -min_density_range, min_density_range);
+			ImGui::DragFloat("Octree density threshold", &min_density, 0.005f, -min_density_range, min_density_range);
 		
 			ImGui::Combo("Mesh render mode", (int*)&m_mesh_render_mode, "Off\0Vertex Colors\0Vertex Normals\0\0");
 			if (uint32_t tricount = m_mesh.indices.size()/3) {

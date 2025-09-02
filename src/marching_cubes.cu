@@ -1182,6 +1182,7 @@ void DensityOctree::Node::extend(int res, int depth, int max_tree_height, float 
 				}
 				leaf_nodes.back().density /= 8.0f;
 				if (leaf_nodes.back().density > min_density && leaf_depth < max_tree_height) leaf_nodes.back().extend(res, leaf_depth, max_tree_height, min_density, get_density_on_grid);
+				if (leaf_nodes.back().density < min_density) leaf_nodes.back().children = nullptr;
 			}
 		}
 	}
@@ -1202,6 +1203,7 @@ void DensityOctree::Node::extend(int res, int depth, int max_tree_height, float 
 						intermediate_nodes.back().density += (*intermediate_nodes.back().children)[i].density;
 					}
 					intermediate_nodes.back().density /= 8.0f;
+					if (leaf_nodes.back().density < min_density) leaf_nodes.back().children = nullptr;
 				}
 			}
 		}
@@ -1214,6 +1216,7 @@ void DensityOctree::Node::extend(int res, int depth, int max_tree_height, float 
 		this->density += (*children)[i].density;
 	}
 	this->density /= 8.0f;
+	if (leaf_nodes.back().density < min_density) leaf_nodes.back().children = nullptr;
 }
 
 DensityOctree::Node& DensityOctree::get_root() {
@@ -1562,7 +1565,7 @@ void DensityOctree::Node::polygonize(MCMesh& mesh, float iso, const std::functio
 
     for (int i = 0; i < 8; ++i) {
         corner_pos[i] = origin + size * s_corner_offsets[i];
-		corner_densities[i] = (*children)[i].density;//sample_density(corner_pos[i]);
+		corner_densities[i] = (*children)[i].density;
     }
 
     int cubeIndex = 0;

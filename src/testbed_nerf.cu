@@ -3268,23 +3268,23 @@ DensityOctree Testbed::build_density_octree(int sample_res, const BoundingBox& a
 DensityOctree mock_density_octree() {
 	std::array<int, 8> diagonals = {6, 7, 4, 5, 2, 3, 0, 1};
 	auto density_octree = DensityOctree::init(vec3(0.0f, 0.0f, 0.0f), 1.0f);
-	density_octree.get_root().density = 0.125f;//512.0f;
+	density_octree.get_root().density = 0.125f;
 	density_octree.get_root().children = std::make_unique<std::array<DensityOctree::Node, 8>>();
 	for (int i = 0; i < 8; ++i) {
 		(*density_octree.get_root().children)[i].size = density_octree.get_root().size / 2.0f;
 		(*density_octree.get_root().children)[i].origin = density_octree.get_root().origin + DensityOctree::s_corner_offsets[i] * (*density_octree.get_root().children)[i].size;
-		(*density_octree.get_root().children)[i].density = 0.125f;//density_octree.get_root().density / 8.0f;
+		(*density_octree.get_root().children)[i].density = 0.125f;
 		(*density_octree.get_root().children)[i].children = std::make_unique<std::array<DensityOctree::Node, 8>>();
 		for (int j = 0; j < 8; ++j) {
 			(*(*density_octree.get_root().children)[i].children)[j].size = (*density_octree.get_root().children)[i].size / 2.0f;
 			(*(*density_octree.get_root().children)[i].children)[j].origin = (*density_octree.get_root().children)[i].origin + DensityOctree::s_corner_offsets[j] * (*(*density_octree.get_root().children)[i].children)[j].size;
 			if (j == diagonals[i]) {
-				(*(*density_octree.get_root().children)[i].children)[j].density = 1.0f;//(*density_octree.get_root().children)[i].density / 8.0f;
+				(*(*density_octree.get_root().children)[i].children)[j].density = 1.0f;
 				(*(*density_octree.get_root().children)[i].children)[j].children = std::make_unique<std::array<DensityOctree::Node, 8>>();
 				for (int k = 0; k < 8; ++k) {
 					(*(*(*density_octree.get_root().children)[i].children)[j].children)[k].size = (*(*density_octree.get_root().children)[i].children)[j].size / 2.0f;
 					(*(*(*density_octree.get_root().children)[i].children)[j].children)[k].origin = (*(*density_octree.get_root().children)[i].children)[j].origin + DensityOctree::s_corner_offsets[k] * (*(*(*density_octree.get_root().children)[i].children)[j].children)[k].size;
-					(*(*(*density_octree.get_root().children)[i].children)[j].children)[k].density = 1.0f;//(*(*density_octree.get_root().children)[i].children)[j].density / 8.0f;
+					(*(*(*density_octree.get_root().children)[i].children)[j].children)[k].density = 1.0f;
 				}
 			}
 		}
@@ -3314,7 +3314,6 @@ DensityOctree mock_density_octree2() {
 
 int Testbed::marching_cubes_octree(int sample_res, const BoundingBox& aabb, const mat3& render_aabb_to_local, float min_density, int max_tree_height) {
   auto density_octree = build_density_octree(sample_res, aabb, render_aabb_to_local, min_density, max_tree_height);
-//   auto density_octree = mock_density_octree2();
   auto mesh = density_octree.polygonize(min_density/* TODO */);
   for (auto& vert : mesh.vertices) {
 	vert = transpose(render_aabb_to_local) * vert;
