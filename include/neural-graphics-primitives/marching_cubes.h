@@ -20,6 +20,9 @@
 #include <tiny-cuda-nn/common.h>
 
 #include <queue>
+#include <optional>
+#include <vector>
+#include <functional>
 
 namespace ngp {
 
@@ -84,6 +87,8 @@ struct MCMesh {
 	std::vector<unsigned int> indices;
 };
 
+enum class Face {PX, NX, PY, NY, PZ, NZ};
+
 // Extend with DFS:
 // - sample leaf subspace
 // - construct subtree bottom-up
@@ -103,8 +108,13 @@ public:
 		float density;
 		std::unique_ptr<std::array<Node, 8>> children;
 
+		Node* parent;
+		int level;
+		int child_idx;
+
 		Node();
 		Node(vec3 origin, float size);
+		Node(vec3 origin, float size, float density, int level, Node* parent, int child_idx);
 
 		bool is_corner() const;
 		bool is_leaf() const;
@@ -114,6 +124,12 @@ public:
 		void traverse(const std::function<void(Node&)>& fun);
 		float sample_density(vec3 pos);
 		void polygonize(MCMesh& mesh, float iso, const std::function<float(vec3 pos)>& sample_density);
+		void polygonize_marching_cubes(MCMesh& mesh, float iso);
+		void polygonize_transvoxel(MCMesh& mesh, float iso, const std::function<float(vec3 pos)>& sample_density);
+
+		void emit_transition(MCMesh& mesh, float iso, const std::function<float(vec3 pos)>& sd, Node& nb, Face f);
+		std::vector<std::pair<Node&, Face>> get_neighors_faces();
+		Node* get_face_neighbor(Face f);
   };
 
 	static DensityOctree init(vec3 origin, float size);
@@ -126,6 +142,7 @@ public:
 	float sample_trilinear(float nx, float ny, float nz);
 
 	MCMesh polygonize(float iso);
+	void fill_transvoxel_data();
 
 private:
   	Node m_root;

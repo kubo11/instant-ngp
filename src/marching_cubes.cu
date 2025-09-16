@@ -19,6 +19,7 @@
 #include <neural-graphics-primitives/common_host.h>
 #include <neural-graphics-primitives/random_val.cuh> // helpers to generate random values, directions
 #include <neural-graphics-primitives/thread_pool.h>
+#include <neural-graphics-primitives/transvoxel.h>
 
 #include <tiny-cuda-nn/gpu_memory.h>
 #include <filesystem/path.h>
@@ -1136,11 +1137,14 @@ DensityOctree DensityOctree::init(vec3 origin, float size) {
 
 void DensityOctree::build(int res, float min_density, int max_tree_height, const std::function<std::vector<float>(const vec3& origin, float size)>& get_density_on_grid) {
 	m_root.extend(res, 0, max_tree_height, min_density, get_density_on_grid);
+	fill_transvoxel_data();
 }
 
-DensityOctree::Node::Node() : origin{0.0f, 0.0f, 0.0f}, size{0.0f}, density{0.0f}, children{nullptr} {}
+DensityOctree::Node::Node() : origin{0.0f, 0.0f, 0.0f}, size{0.0f}, density{0.0f}, children{nullptr}, parent{nullptr}, level{0}, child_idx{-1} {}
 
-DensityOctree::Node::Node(vec3 center, float size) : origin{center}, size{size}, density{0.0f}, children{nullptr} {} 
+DensityOctree::Node::Node(vec3 origin, float size) : origin{origin}, size{size}, density{0.0f}, children{nullptr}, parent{nullptr}, level{0}, child_idx{-1} {}
+
+DensityOctree::Node::Node(vec3 origin, float size, float density, int level, Node* parent, int child_idx) : origin{origin}, size{size}, density{density}, children{nullptr}, parent{parent}, level{level}, child_idx{child_idx} {}
 
 bool DensityOctree::Node::is_corner() const {
 	return children == nullptr;
@@ -1177,7 +1181,7 @@ void DensityOctree::Node::extend(int res, int depth, int max_tree_height, float 
 				for (int i = 0; i < s_corner_offsets.size(); ++i) {
 					(*leaf_nodes.back().children)[i] = DensityOctree::Node(leaf_nodes.back().origin+corner_size*s_corner_offsets[i], corner_size);
 					auto corner_pos = ivec3(x, y, z) + ivec3(s_corner_offsets[i]);
-					(*leaf_nodes.back().children)[i].density = density[corner_pos.x + grid_res * corner_pos.y + grid_res * grid_res * corner_pos.z];
+					(*leaf_nodes.back().children)[i].density = density[corner_pos.x + grid_res * corner_pos.y + grid_res * grid_res * corner_pos.z];	
 					leaf_nodes.back().density += (*leaf_nodes.back().children)[i].density;
 				}
 				leaf_nodes.back().density /= 8.0f;
@@ -1560,6 +1564,11 @@ static constexpr int8_t triangle_table[256][16] =
 };
 
 void DensityOctree::Node::polygonize(MCMesh& mesh, float iso, const std::function<float(vec3 pos)>& sample_density) {
+	polygonize_marching_cubes(mesh, iso);
+	polygonize_transvoxel(mesh, iso, sample_density);
+}
+
+void DensityOctree::Node::polygonize_marching_cubes(MCMesh& mesh, float iso) {
     std::array<vec3, 8> corner_pos;
 	std::array<float, 8> corner_densities;
 
@@ -1595,6 +1604,390 @@ void DensityOctree::Node::polygonize(MCMesh& mesh, float iso, const std::functio
         mesh.indices.push_back(start + 1);
         mesh.indices.push_back(start + 2);
     }
+}
+
+std::vector<std::pair<DensityOctree::Node&, Face>> DensityOctree::Node::get_neighors_faces() {
+	std::vector<std::pair<DensityOctree::Node&, Face>> result;
+
+	for (auto& face : {Face::NX, Face::PX, Face::NY, Face::PY, Face::NZ, Face::PZ}) {
+		auto res = get_face_neighbor(face);
+		if (res) result.push_back({*res, face});
+	}
+
+	return result;
+}
+
+struct Dir { int axis; int dir; };  // axis:0=x,1=y,2=z; dir:+1 or -1
+Dir faceDir(Face f){
+    switch (f){
+        case Face::PX: return {0,+1}; case Face::NX: return {0,-1};
+        case Face::PY: return {1,+1}; case Face::NY: return {1,-1};
+        case Face::PZ: return {2,+1}; default:       return {2,-1};
+    }
+}
+
+DensityOctree::Node* descendTowardInterface(DensityOctree::Node* nb, const std::vector<uint8_t>& pathBits, const Dir& d)
+{
+    // We climbed from 'n' up, recording childIndex at each level in pathBits.
+    // Now we descend nb, mirroring those levels (reverse order), choosing:
+    //   - along face axis: child bit = (d.dir == +1 ? 0 : 1) to touch the interface
+    //   - along tangential axes: copy the bits from the original path
+    for (int i = (int)pathBits.size() - 1; nb && nb->children != nullptr && i >= 0; --i) {
+        uint8_t b = pathBits[i];
+        int cx = (d.axis==0) ? ((d.dir==+1)?0:1) : (b & 1);
+        int cy = (d.axis==1) ? ((d.dir==+1)?0:1) : ((b >> 1) & 1);
+        int cz = (d.axis==2) ? ((d.dir==+1)?0:1) : ((b >> 2) & 1);
+        int child = (cx) | (cy<<1) | (cz<<2);
+        nb = &(*nb->children)[child];
+    }
+    return nb; // may be leaf, null, or still internal (=> finer)
+}
+
+int bitX(uint8_t childIndex) { return (childIndex >> 0) & 1; }
+int bitY(uint8_t childIndex) { return (childIndex >> 1) & 1; }
+int bitZ(uint8_t childIndex) { return (childIndex >> 2) & 1; }
+
+DensityOctree::Node* DensityOctree::Node::get_face_neighbor(Face f) {
+    Dir d = faceDir(f);
+
+    // Fast path: sibling inside the same parent
+    if (this->parent) {
+        int b = (d.axis==0) ? bitX(this->child_idx) : (d.axis==1) ? bitY(this->child_idx) : bitZ(this->child_idx);
+        bool canStepInsideParent = (d.dir==+1 ? (b==0) : (b==1));
+        if (canStepInsideParent) {
+            int acrossChild = this->child_idx ^ (1 << d.axis); // flip axis bit
+            Node* nb = this->parent->children != nullptr ? &(*(this->parent->children))[acrossChild] : nullptr;
+            if (!nb) return nullptr;
+
+            // Descend to the same level as 'n' (mirror original one step)
+            std::vector<uint8_t> oneStep { (uint8_t)this->child_idx };
+            nb = descendTowardInterface(nb, oneStep, d);
+
+            if (!nb) return nullptr;
+            return nb;
+        }
+    }
+
+    // General path: climb until we can step across at an ancestor
+    std::vector<uint8_t> pathBits; // record n's childIndex at each climbed level
+    Node* a = this;
+    Node* p = a->parent;
+
+    while (p) {
+        int b = (d.axis==0) ? bitX(a->child_idx) : (d.axis==1) ? bitY(a->child_idx) : bitZ(a->child_idx);
+        bool onOuterSide = (d.dir==+1 ? (b==1) : (b==0));
+        if (!onOuterSide) break;          // can step at this ancestor
+        pathBits.push_back(a->child_idx);
+        a = p;
+        p = a->parent;
+    }
+
+    if (!p) {
+        // No ancestor to step across -> outside the tree boundary
+        return nullptr;
+    }
+
+    int acrossChild = a->child_idx ^ (1 << d.axis);
+    Node* nb = (p->children != nullptr) ? &(*p->children)[acrossChild] : nullptr;
+    if (!nb) return nullptr;
+
+    // Descend on neighbor side to match 'n' depth
+    nb = descendTowardInterface(nb, pathBits, d);
+
+    if (!nb) return nullptr;
+    return nb;
+}
+
+static vec3 ex() { return {1,0,0}; }
+static vec3 ey() { return {0,1,0}; }
+static vec3 ez() { return {0,0,1}; }
+
+void setRow(mat4& M, int r, const vec3& d, const vec3& p0) {
+    M.m[r][0] = d.x;  M.m[r][1] = d.y;  M.m[r][2] = d.z;  M.m[r][3] = -dot(d, p0);
+}
+
+mat4 faceBasis(Face f, const vec3& origin, float h, uint8_t childIndex) {
+    vec3 u, v, w;
+    vec3 p0;
+
+    switch (f) {
+        case Face::PX: {
+            w = ex(); u = ey(); v = ez();
+            const float y0 = origin.y - bitY(childIndex) * h;
+            const float z0 = origin.z - bitZ(childIndex) * h;
+            p0 = { origin.x + h, y0, z0 };
+            break;
+        }
+        case Face::NX: {
+            w = { -1, 0, 0 }; u = ez(); v = ey();
+            const float y0 = origin.y - bitY(childIndex) * h;
+            const float z0 = origin.z - bitZ(childIndex) * h;
+            p0 = { origin.x, y0, z0 };
+            break;
+        }
+        case Face::PY: {
+            w = ey(); u = ez(); v = ex();
+            const float x0 = origin.x - bitX(childIndex) * h;
+            const float z0 = origin.z - bitZ(childIndex) * h;
+            p0 = { x0, origin.y + h, z0 };
+            break;
+        }
+        case Face::NY: {
+            w = { 0, -1, 0 }; u = ex(); v = ez();
+            const float x0 = origin.x - bitX(childIndex) * h;
+            const float z0 = origin.z - bitZ(childIndex) * h;
+            p0 = { x0, origin.y, z0 };
+            break;
+        }
+        case Face::PZ: {
+            w = ez(); u = ex(); v = ey();
+            const float x0 = origin.x - bitX(childIndex) * h;
+            const float y0 = origin.y - bitY(childIndex) * h;
+            p0 = { x0, y0, origin.z + h };
+            break;
+        }
+        case Face::NZ: {
+            w = { 0, 0, -1 }; u = ey(); v = ex();
+            const float x0 = origin.x - bitX(childIndex) * h;
+            const float y0 = origin.y - bitY(childIndex) * h;
+            p0 = { x0, y0, origin.z };
+            break;
+        }
+    }
+
+    mat4 M = mat4::identity();
+    setRow(M, 0, u, p0);
+    setRow(M, 1, v, p0);
+    setRow(M, 2, w, p0);
+    return M;
+}
+
+struct SampleSet {
+    std::array<vec3, 13> pos;
+    std::array<float, 13> val;
+};
+
+vec3 transformPoint(const mat4& M, const vec3& p) {
+    vec4 h = M * vec4(p, 1.0f);
+    return vec3(h.x, h.y, h.z) / h.w;
+}
+
+void gatherNearFaceSamples9(SampleSet& S,
+                            int qx, int qy, float h,
+                            const mat4& toWorld,
+                            const std::function<float(vec3)>& sd,
+                            int baseIndex = 0)
+{
+    const float x0 = qx * h;
+    const float y0 = qy * h;
+    const float x1 = x0 + h;
+    const float y1 = y0 + h;
+    const float dx = h * 0.5f;
+    const float dy = h * 0.5f;
+
+    {
+        vec3 p0(x0,      y0,      0.0f);
+        vec3 p1(x0+dx,   y0,      0.0f);
+        vec3 p2(x1,      y0,      0.0f);
+        S.pos[baseIndex + 0] = p0; S.val[baseIndex + 0] = sd(transformPoint(toWorld, p0));
+        S.pos[baseIndex + 1] = p1; S.val[baseIndex + 1] = sd(transformPoint(toWorld, p1));
+        S.pos[baseIndex + 2] = p2; S.val[baseIndex + 2] = sd(transformPoint(toWorld, p2));
+    }
+
+    {
+        vec3 p3(x0,      y0+dy,   0.0f);
+        vec3 p4(x0+dx,   y0+dy,   0.0f);
+        vec3 p5(x1,      y0+dy,   0.0f);
+        S.pos[baseIndex + 3] = p3; S.val[baseIndex + 3] = sd(transformPoint(toWorld, p3));
+        S.pos[baseIndex + 4] = p4; S.val[baseIndex + 4] = sd(transformPoint(toWorld, p4));
+        S.pos[baseIndex + 5] = p5; S.val[baseIndex + 5] = sd(transformPoint(toWorld, p5));
+    }
+
+    {
+        vec3 p6(x0,      y1,      0.0f);
+        vec3 p7(x0+dx,   y1,      0.0f);
+        vec3 p8(x1,      y1,      0.0f);
+        S.pos[baseIndex + 6] = p6; S.val[baseIndex + 6] = sd(transformPoint(toWorld, p6));
+        S.pos[baseIndex + 7] = p7; S.val[baseIndex + 7] = sd(transformPoint(toWorld, p7));
+        S.pos[baseIndex + 8] = p8; S.val[baseIndex + 8] = sd(transformPoint(toWorld, p8));
+    }
+}
+
+void addBackSamples4(SampleSet& S,
+                     int qx, int qy, float h,
+                     const mat4& toWorld,
+                     const std::function<float(vec3)>& sd,
+                     float zBack = -1.0f,
+                     int baseIndex = 9) {
+    if (zBack < 0.0f) zBack = h;
+
+    const float x0 = qx * h;
+    const float y0 = qy * h;
+    const float x1 = x0 + h;
+    const float y1 = y0 + h;
+
+    const vec3 pBL(x0, y0, zBack);
+    const vec3 pBR(x1, y0, zBack);
+    const vec3 pTL(x0, y1, zBack);
+    const vec3 pTR(x1, y1, zBack);
+
+    auto W = [&](const vec3& p)->vec3{ return transformPoint(toWorld, p); };
+
+    S.pos[baseIndex + 0] = pBL; S.val[baseIndex + 0] = sd(W(pBL));
+    S.pos[baseIndex + 1] = pBR; S.val[baseIndex + 1] = sd(W(pBR));
+    S.pos[baseIndex + 2] = pTL; S.val[baseIndex + 2] = sd(W(pTL));
+    S.pos[baseIndex + 3] = pTR; S.val[baseIndex + 3] = sd(W(pTR));
+}
+
+// uint16_t buildTransitionCaseIndex(const SampleSet& S, float iso) {
+//     uint32_t nearMask = 0;
+//     for (int i = 0; i < 9; ++i) {
+//         const uint32_t bit = (S.val[i] < iso) ? 1u : 0u;
+//         nearMask |= (bit << i);
+//     }
+
+//     uint32_t backMask = 0;
+//     for (int i = 0; i < 4; ++i) {
+//         const uint32_t bit = (S.val[i] < iso) ? 1u : 0u;
+//         backMask |= (bit << i);
+//     }
+
+//     uint32_t idx = (backMask << 9) | nearMask;
+
+//     return static_cast<uint16_t>(idx);
+// }
+
+uint16_t buildTransitionCaseIndex(const SampleSet& S, float iso) {
+    // Only the 3x3 near face (9 samples) define the case (2^9 = 512).
+    uint32_t nearMask = 0u;
+    for (int i = 0; i < 9; ++i) {
+        const uint32_t bit = (S.val[i] < iso) ? 1u : 0u;
+        nearMask |= (bit << i);
+    }
+    return static_cast<uint16_t>(nearMask);
+}
+
+TransitionTables T = buildTransitionTables();
+
+// void DensityOctree::Node::emit_transition(MCMesh& mesh, float iso, const std::function<float(vec3 pos)>& sd, DensityOctree::Node& nb, Face f) {
+//     float h = this->size;
+//     float H = this->size * 2.0f;
+//     float dz = h * 0.5f;
+
+// 	mat4 toFace = faceBasis(f, this->origin, h, this->child_idx);
+//     mat4 toWorld = inverse(toFace);
+
+//     for (int qy=0; qy<2; ++qy)
+//     for (int qx=0; qx<2; ++qx) {
+//         SampleSet S;
+//         gatherNearFaceSamples9(S, qx, qy, h, toWorld, sd);
+
+//         addBackSamples4(S, qx, qy, h, toWorld, sd);
+
+//         uint16_t tIndex = buildTransitionCaseIndex(S, iso);
+
+//         if (T.edgeTable[tIndex]==0) continue;
+
+// 		vec3 vlist[T.MAX_T_EDGES];
+// 		for (int e = 0; e < T.numEdges; ++e) {
+// 			if (T.edgeTable[tIndex] & (1 << e)) {
+// 				auto ep = T.edgeEndpoints(e, S);
+// 				vec3 w0 = toWorld * ep.p0;
+// 				vec3 w1 = toWorld * ep.p1;
+// 				vlist[e] = vertex_interp(iso, w0, w1, ep.d0, ep.d1);
+// 			}
+// 		}
+
+// 		int e2idx[T.MAX_T_EDGES];
+// 		for (int i = 0; i < T.MAX_T_EDGES; ++i) e2idx[i] = -1;
+
+// 		for (int t = 0; T.triTable[tIndex][t] != -1; t += 3) {
+// 			uint32_t triIdx[3];
+// 			for (int k = 0; k < 3; ++k) {
+// 				int e = T.triTable[tIndex][t + k];
+// 				if (e2idx[e] == -1) {
+// 					e2idx[e] = static_cast<uint32_t>(mesh.vertices.size());
+// 					mesh.vertices.push_back(vlist[e]);
+// 				}
+// 				triIdx[k] = e2idx[e];
+// 			}
+// 			mesh.indices.push_back(triIdx[0]);
+// 			mesh.indices.push_back(triIdx[1]);
+// 			mesh.indices.push_back(triIdx[2]);
+// 		}
+//     }
+// }
+
+void quadrantForFace(Face f, uint8_t childIndex, int& qx, int& qy) {
+    switch (f) {
+        case Face::PX: case Face::NX: qx = bitY(childIndex); qy = bitZ(childIndex); break;
+        case Face::PY: case Face::NY: qx = bitZ(childIndex); qy = bitX(childIndex); break;
+        case Face::PZ: case Face::NZ: qx = bitX(childIndex); qy = bitY(childIndex); break;
+    }
+}
+
+
+void DensityOctree::Node::emit_transition(MCMesh& mesh, float iso, const std::function<float(vec3 pos)>& sd, DensityOctree::Node& nb, Face f) {
+    const float h = this->size;
+
+    mat4 toFace  = faceBasis(f, this->origin, h, this->child_idx);
+    mat4 toWorld = inverse(toFace);
+
+    SampleSet S;
+    int qx=0, qy=0; quadrantForFace(f, this->child_idx, qx, qy);
+    gatherNearFaceSamples9(S, qx, qy, h, toWorld, sd);
+    addBackSamples4(S, qx, qy, h, toWorld, sd, h);
+
+    const uint16_t tCase = buildTransitionCaseIndex(S, iso);
+
+    static TransitionTables T = buildTransitionTables();
+
+    const uint32_t mask = T.edgeTable[tCase];
+    if (mask == 0) return;
+
+    std::array<vec3, TransitionTables::MAX_T_EDGES> vlist{};
+    for (int e=0; e<(int)T.edgeCount[tCase]; ++e) {
+        if (!(mask & (1u<<e))) continue;
+        auto [fp0, fp1, d0, d1] = T.edgeEndpoints(tCase, e, S);
+        vec3 w0 = transformPoint(toWorld, fp0);
+        vec3 w1 = transformPoint(toWorld, fp1);
+        vlist[e] = vertex_interp(iso, w0, w1, d0, d1);
+    }
+
+    for (int i=0; T.triTable[tCase][i] != -1; i += 3) {
+        const int e0 = T.triTable[tCase][i+0];
+        const int e1 = T.triTable[tCase][i+1];
+        const int e2 = T.triTable[tCase][i+2];
+
+        const uint32_t base = (uint32_t)mesh.vertices.size();
+        mesh.vertices.push_back(vlist[e0]);
+        mesh.vertices.push_back(vlist[e1]);
+        mesh.vertices.push_back(vlist[e2]);
+
+        mesh.indices.push_back(base+0);
+        mesh.indices.push_back(base+1);
+        mesh.indices.push_back(base+2);
+    }
+}
+
+void DensityOctree::Node::polygonize_transvoxel(MCMesh& mesh, float iso, const std::function<float(vec3 pos)>& sample_density) {
+    for (auto& [nb, f] : get_neighors_faces()) {
+        if (nb.size == size) continue;
+        if (nb.size == size*2) {
+            emit_transition(mesh, iso, sample_density, nb, f);
+        }
+    }
+}
+
+void DensityOctree::fill_transvoxel_data() {
+	traverse([](DensityOctree::Node& node){
+		if (node.children == nullptr) return;
+		for (int i = 0; i < 8; ++i) {
+			(*node.children)[i].parent = &node;
+			(*node.children)[i].child_idx = i;
+			(*node.children)[i].level = node.level + 1;
+		}
+	});
 }
 
 }
