@@ -130,6 +130,8 @@ public:
 		void emit_transition(MCMesh& mesh, float iso, const std::function<float(vec3 pos)>& sd, Node& nb, Face f);
 		std::vector<std::pair<Node&, Face>> get_neighors_faces();
 		Node* get_face_neighbor(Face f);
+		int decide_fate(float band, float iso);
+		bool intersects_band(float band, float iso);
   };
 
 	static DensityOctree init(vec3 origin, float size);

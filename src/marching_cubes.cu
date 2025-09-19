@@ -26,6 +26,8 @@
 
 #include <stdarg.h>
 
+#include <limits>
+
 #ifdef NGP_GUI
 #  ifdef _WIN32
 #    include <GL/gl3w.h>
@@ -1111,8 +1113,15 @@ void save_rgba_grid_to_raw_file(const GPUMemory<vec4>& rgba, const fs::path& pat
 	tlog::success() << "Wrote RGBA raw file to " << actual_path.str();
 }
 
-vec3 vertex_interp(float iso, vec3 p1, vec3 p2, float d1, float d2) {
-    float t = (iso - d1) / (d2 - d1 + 1e-9f);
+// vec3 vertex_interp(float iso, vec3 p1, vec3 p2, float d1, float d2) {
+//     float t = (iso - d1) / (d2 - d1 + 1e-9f);
+//     return p1 + t * (p2 - p1);
+// }
+
+inline vec3 vertex_interp(float iso, vec3 p1, vec3 p2, float d1, float d2) {
+    float denom = (d2 - d1);
+    float t = (fabsf(denom) > 1e-8f) ? (iso - d1) / denom : 0.5f;
+    t = std::min(std::max(t, 0.0f), 1.0f);
     return p1 + t * (p2 - p1);
 }
 
@@ -1165,6 +1174,7 @@ bool DensityOctree::Node::is_intermediate() const {
 }
 
 void DensityOctree::Node::extend(int res, int depth, int max_tree_height, float min_density, const std::function<std::vector<float>(const vec3& origin, float size)>& get_density_on_grid) {
+	float band = 0.01f;
 	auto grid_res = res + 1;
 	auto density = get_density_on_grid(origin, size);
 	auto leaf_nodes = std::vector<DensityOctree::Node>();
@@ -1185,8 +1195,24 @@ void DensityOctree::Node::extend(int res, int depth, int max_tree_height, float 
 					leaf_nodes.back().density += (*leaf_nodes.back().children)[i].density;
 				}
 				leaf_nodes.back().density /= 8.0f;
-				if (leaf_nodes.back().density > min_density && leaf_depth < max_tree_height) leaf_nodes.back().extend(res, leaf_depth, max_tree_height, min_density, get_density_on_grid);
-				if (leaf_nodes.back().density < min_density) leaf_nodes.back().children = nullptr;
+				// switch (leaf_nodes.back().decide_fate(band, min_density)) {
+				// case 1:
+				// 	if (leaf_depth < max_tree_height) leaf_nodes.back().extend(res, leaf_depth, max_tree_height, min_density, get_density_on_grid);
+				// 	break;
+				// case -1:
+				// 	leaf_nodes.back().children = nullptr;
+				// 	// TODO check if can prune!!!!!!!!!!!!!!! (size diff)
+				// 	break;
+				// case 0:
+				// default:
+				// 	break;
+				// }
+				if (!leaf_nodes.back().intersects_band(band, min_density)) {
+					if (leaf_nodes.back().density < min_density) leaf_nodes.back().children = nullptr;
+				}
+				else {
+					if (leaf_depth < max_tree_height) leaf_nodes.back().extend(res, leaf_depth, max_tree_height, min_density, get_density_on_grid);
+				}
 			}
 		}
 	}
@@ -1207,7 +1233,13 @@ void DensityOctree::Node::extend(int res, int depth, int max_tree_height, float 
 						intermediate_nodes.back().density += (*intermediate_nodes.back().children)[i].density;
 					}
 					intermediate_nodes.back().density /= 8.0f;
-					if (leaf_nodes.back().density < min_density) leaf_nodes.back().children = nullptr;
+					// if (intermediate_nodes.back().decide_fate(band, min_density) == -1) {
+					// 	leaf_nodes.back().children = nullptr;
+					// 	// TODO check if can prune!!!!!!!!!!!!!!! (size diff)
+					// }
+					if (!intermediate_nodes.back().intersects_band(band, min_density)) {
+						if (intermediate_nodes.back().density < min_density) intermediate_nodes.back().children = nullptr;
+					}
 				}
 			}
 		}
@@ -1220,7 +1252,13 @@ void DensityOctree::Node::extend(int res, int depth, int max_tree_height, float 
 		this->density += (*children)[i].density;
 	}
 	this->density /= 8.0f;
-	if (leaf_nodes.back().density < min_density) leaf_nodes.back().children = nullptr;
+	// if (this->decide_fate(band, min_density) == -1) {
+	// 	leaf_nodes.back().children = nullptr;
+	// 	// TODO check if can prune!!!!!!!!!!!!!!! (size diff)
+	// }
+	if (!this->intersects_band(band, min_density)) {
+		if (this->density < min_density) this->children = nullptr;
+	}
 }
 
 DensityOctree::Node& DensityOctree::get_root() {
@@ -1857,14 +1895,23 @@ void addBackSamples4(SampleSet& S,
 //     return static_cast<uint16_t>(idx);
 // }
 
+inline uint8_t sign_bit(float d, float iso) {
+    // Quantize to make borderline values deterministic across passes.
+    // Tune EPS to your field's dynamic range; 1e-6f is a good start.
+    constexpr float EPS = 1e-6f;
+    float q = d - iso;
+    if (q <= -EPS) return 1u;   // "inside"
+    if (q >=  EPS) return 0u;   // "outside"
+    // Tie-breaker for |q| < EPS: bias to outside to avoid slivers
+    return 0u;
+}
+
 uint16_t buildTransitionCaseIndex(const SampleSet& S, float iso) {
-    // Only the 3x3 near face (9 samples) define the case (2^9 = 512).
     uint32_t nearMask = 0u;
     for (int i = 0; i < 9; ++i) {
-        const uint32_t bit = (S.val[i] < iso) ? 1u : 0u;
-        nearMask |= (bit << i);
+        nearMask |= (uint32_t(sign_bit(S.val[i], iso)) << i);
     }
-    return static_cast<uint16_t>(nearMask);
+    return (uint16_t)nearMask; // 0..511
 }
 
 TransitionTables T = buildTransitionTables();
@@ -1988,6 +2035,35 @@ void DensityOctree::fill_transvoxel_data() {
 			(*node.children)[i].level = node.level + 1;
 		}
 	});
+}
+
+// -1 - prune, 0 - leave, 1 - extend
+int DensityOctree::Node::decide_fate(float band, float iso) {
+	if (is_corner()) return 0;
+
+    float dmin = std::numeric_limits<float>::max();
+	float dmax = std::numeric_limits<float>::min();
+    for (int i=0;i<8;++i) {
+        dmin = std::min(dmin, (*children)[i].density);
+        dmax = std::max(dmax, (*children)[i].density);
+    }
+
+	if (dmin > iso + band) return 1;
+	if (dmax < iso - band) return -1;
+	return 0;
+}
+
+bool DensityOctree::Node::intersects_band(float band, float iso) {
+	if (is_corner()) return 0;
+
+    float dmin = std::numeric_limits<float>::max();
+	float dmax = std::numeric_limits<float>::min();
+    for (int i=0;i<8;++i) {
+        dmin = std::min(dmin, (*children)[i].density);
+        dmax = std::max(dmax, (*children)[i].density);
+    }
+
+	return (dmin <= iso + band) && (dmax >= iso - band);;
 }
 
 }
