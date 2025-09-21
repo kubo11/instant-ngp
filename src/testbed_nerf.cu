@@ -3314,7 +3314,7 @@ DensityOctree mock_density_octree2() {
 
 int Testbed::marching_cubes_octree(int sample_res, const BoundingBox& aabb, const mat3& render_aabb_to_local, float min_density, int max_tree_height) {
   auto density_octree = build_density_octree(sample_res, aabb, render_aabb_to_local, min_density, max_tree_height);
-  auto mesh = density_octree.polygonize(min_density/* TODO */);
+  auto mesh = density_octree.polygonize(min_density/* TODO */, max_tree_height);
   for (auto& vert : mesh.vertices) {
 	vert = transpose(render_aabb_to_local) * vert;
   }

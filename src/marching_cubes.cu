@@ -1113,11 +1113,6 @@ void save_rgba_grid_to_raw_file(const GPUMemory<vec4>& rgba, const fs::path& pat
 	tlog::success() << "Wrote RGBA raw file to " << actual_path.str();
 }
 
-// vec3 vertex_interp(float iso, vec3 p1, vec3 p2, float d1, float d2) {
-//     float t = (iso - d1) / (d2 - d1 + 1e-9f);
-//     return p1 + t * (p2 - p1);
-// }
-
 inline vec3 vertex_interp(float iso, vec3 p1, vec3 p2, float d1, float d2) {
     float denom = (d2 - d1);
     float t = (fabsf(denom) > 1e-8f) ? (iso - d1) / denom : 0.5f;
@@ -1195,18 +1190,6 @@ void DensityOctree::Node::extend(int res, int depth, int max_tree_height, float 
 					leaf_nodes.back().density += (*leaf_nodes.back().children)[i].density;
 				}
 				leaf_nodes.back().density /= 8.0f;
-				// switch (leaf_nodes.back().decide_fate(band, min_density)) {
-				// case 1:
-				// 	if (leaf_depth < max_tree_height) leaf_nodes.back().extend(res, leaf_depth, max_tree_height, min_density, get_density_on_grid);
-				// 	break;
-				// case -1:
-				// 	leaf_nodes.back().children = nullptr;
-				// 	// TODO check if can prune!!!!!!!!!!!!!!! (size diff)
-				// 	break;
-				// case 0:
-				// default:
-				// 	break;
-				// }
 				if (!leaf_nodes.back().intersects_band(band, min_density)) {
 					if (leaf_nodes.back().density < min_density) leaf_nodes.back().children = nullptr;
 				}
@@ -1233,10 +1216,6 @@ void DensityOctree::Node::extend(int res, int depth, int max_tree_height, float 
 						intermediate_nodes.back().density += (*intermediate_nodes.back().children)[i].density;
 					}
 					intermediate_nodes.back().density /= 8.0f;
-					// if (intermediate_nodes.back().decide_fate(band, min_density) == -1) {
-					// 	leaf_nodes.back().children = nullptr;
-					// 	// TODO check if can prune!!!!!!!!!!!!!!! (size diff)
-					// }
 					if (!intermediate_nodes.back().intersects_band(band, min_density)) {
 						if (intermediate_nodes.back().density < min_density) intermediate_nodes.back().children = nullptr;
 					}
@@ -1252,10 +1231,6 @@ void DensityOctree::Node::extend(int res, int depth, int max_tree_height, float 
 		this->density += (*children)[i].density;
 	}
 	this->density /= 8.0f;
-	// if (this->decide_fate(band, min_density) == -1) {
-	// 	leaf_nodes.back().children = nullptr;
-	// 	// TODO check if can prune!!!!!!!!!!!!!!! (size diff)
-	// }
 	if (!this->intersects_band(band, min_density)) {
 		if (this->density < min_density) this->children = nullptr;
 	}
@@ -1311,12 +1286,51 @@ float DensityOctree::Node::sample_density(vec3 pos) {
 	return d0 * (1.0 - local.z) + d1 * local.z;
 }
 
-MCMesh DensityOctree::polygonize(float iso) {
+inline uint64_t mc_edge_key_from_tables(const ivec3& cellMinBase, int cellSizeBase, int edge) {
+    const int ca = DensityOctree::s_edge_connections[edge][0];
+    const int cb = DensityOctree::s_edge_connections[edge][1];
+
+    auto to_int_off = [&](int corner)->ivec3 {
+        const vec3& o = DensityOctree::s_corner_offsets[corner];
+        return ivec3{ int(o.x + 0.5f), int(o.y + 0.5f), int(o.z + 0.5f) };
+    };
+
+    const ivec3 oa = to_int_off(ca);
+    const ivec3 ob = to_int_off(cb);
+
+    const ivec3 pa{ cellMinBase.x + oa.x*cellSizeBase,
+                 cellMinBase.y + oa.y*cellSizeBase,
+                 cellMinBase.z + oa.z*cellSizeBase };
+    const ivec3 pb{ cellMinBase.x + ob.x*cellSizeBase,
+                 cellMinBase.y + ob.y*cellSizeBase,
+                 cellMinBase.z + ob.z*cellSizeBase };
+
+    int axis = 0;
+    if (pa.x != pb.x) axis = 0;
+    else if (pa.y != pb.y) axis = 1;
+    else                   axis = 2;
+
+    ivec3 lower = pa;
+    if ((axis == 0 && pb.x < pa.x) ||
+        (axis == 1 && pb.y < pa.y) ||
+        (axis == 2 && pb.z < pa.z)) {
+        lower = pb;
+    }
+
+    return (morton3D_21(uint32_t(lower.x), uint32_t(lower.y), uint32_t(lower.z)) << 2)
+         | uint64_t(axis & 3);
+}
+
+MCMesh DensityOctree::polygonize(float iso, int max_tree_height) {
 	MCMesh mesh{};
+	mesh.base_h = 1.0f / (1 << max_tree_height);
 
 	traverse([&mesh, &iso, this](Node& node) {
 		if (node.is_leaf()) node.polygonize(mesh, iso, std::bind(&DensityOctree::sample_density, this, std::placeholders::_1));
 	});
+
+	mesh.mcEdgeCache.clear();
+	mesh.faceEdgeCache.clear();
 
 	return mesh;
 }
@@ -1607,42 +1621,60 @@ void DensityOctree::Node::polygonize(MCMesh& mesh, float iso, const std::functio
 }
 
 void DensityOctree::Node::polygonize_marching_cubes(MCMesh& mesh, float iso) {
-    std::array<vec3, 8> corner_pos;
-	std::array<float, 8> corner_densities;
+    std::array<vec3, 8>  corner_pos;
+    std::array<float, 8> corner_densities;
 
     for (int i = 0; i < 8; ++i) {
-        corner_pos[i] = origin + size * s_corner_offsets[i];
-		corner_densities[i] = (*children)[i].density;
+        corner_pos[i]      = origin + size * s_corner_offsets[i];
+        corner_densities[i]= (*children)[i].density;  // your stored density per corner
     }
 
     int cubeIndex = 0;
-    for (int i = 0; i < 8; i++) {
-        if (corner_densities[i] < iso)
-            cubeIndex |= (1 << i);
+    for (int i = 0; i < 8; ++i) {
+        if (corner_densities[i] < iso) cubeIndex |= (1 << i);
     }
+    if (edge_table[cubeIndex] == 0) return;
 
-    if (edge_table[cubeIndex] == 0)
-        return;
+    const ivec3 cellMinBase = to_base(origin, mesh.base_origin, mesh.base_h);
+    const int cellSizeBase = (int)lroundf(size / mesh.base_h);
 
-    vec3 vertList[12];
-    for (int i = 0; i < 12; i++) {
-        if (edge_table[cubeIndex] & (1 << i)) {
-            int a = s_edge_connections[i][0];
-            int b = s_edge_connections[i][1];
-            vertList[i] = vertex_interp(iso, corner_pos[a], corner_pos[b], corner_densities[a], corner_densities[b]);
+    int vertIdx[12];
+    for (int e = 0; e < 12; ++e) {
+        if (edge_table[cubeIndex] & (1 << e)) {
+
+            auto creator = [&]() -> int {
+                const int a = s_edge_connections[e][0];
+                const int b = s_edge_connections[e][1];
+                const vec3 pA = corner_pos[a];
+                const vec3 pB = corner_pos[b];
+                const float dA = corner_densities[a];
+                const float dB = corner_densities[b];
+                const vec3 P = vertex_interp(iso, pA, pB, dA, dB);
+                return (int)mesh.add_vertex(P);
+            };
+
+            vertIdx[e] = mesh.mcEdgeCache.get_or_create(
+				mc_edge_key_from_tables(cellMinBase, cellSizeBase, e),
+				creator
+			);
+        } else {
+            vertIdx[e] = -1;
         }
     }
 
     for (int i = 0; triangle_table[cubeIndex][i] != -1; i += 3) {
-        uint32_t start = mesh.vertices.size();
-        mesh.vertices.push_back(vertList[triangle_table[cubeIndex][i]]);
-        mesh.vertices.push_back(vertList[triangle_table[cubeIndex][i + 1]]);
-        mesh.vertices.push_back(vertList[triangle_table[cubeIndex][i + 2]]);
-        mesh.indices.push_back(start);
-        mesh.indices.push_back(start + 1);
-        mesh.indices.push_back(start + 2);
+        const int e0 = triangle_table[cubeIndex][i+0];
+        const int e1 = triangle_table[cubeIndex][i+1];
+        const int e2 = triangle_table[cubeIndex][i+2];
+
+        if (vertIdx[e0] < 0 || vertIdx[e1] < 0 || vertIdx[e2] < 0) continue;
+
+        mesh.indices.push_back((uint32_t)vertIdx[e0]);
+        mesh.indices.push_back((uint32_t)vertIdx[e1]);
+        mesh.indices.push_back((uint32_t)vertIdx[e2]);
     }
 }
+
 
 std::vector<std::pair<DensityOctree::Node&, Face>> DensityOctree::Node::get_neighors_faces() {
 	std::vector<std::pair<DensityOctree::Node&, Face>> result;
@@ -1655,7 +1687,7 @@ std::vector<std::pair<DensityOctree::Node&, Face>> DensityOctree::Node::get_neig
 	return result;
 }
 
-struct Dir { int axis; int dir; };  // axis:0=x,1=y,2=z; dir:+1 or -1
+struct Dir { int axis; int dir; };
 Dir faceDir(Face f){
     switch (f){
         case Face::PX: return {0,+1}; case Face::NX: return {0,-1};
@@ -1664,12 +1696,7 @@ Dir faceDir(Face f){
     }
 }
 
-DensityOctree::Node* descendTowardInterface(DensityOctree::Node* nb, const std::vector<uint8_t>& pathBits, const Dir& d)
-{
-    // We climbed from 'n' up, recording childIndex at each level in pathBits.
-    // Now we descend nb, mirroring those levels (reverse order), choosing:
-    //   - along face axis: child bit = (d.dir == +1 ? 0 : 1) to touch the interface
-    //   - along tangential axes: copy the bits from the original path
+DensityOctree::Node* descendTowardInterface(DensityOctree::Node* nb, const std::vector<uint8_t>& pathBits, const Dir& d) {
     for (int i = (int)pathBits.size() - 1; nb && nb->children != nullptr && i >= 0; --i) {
         uint8_t b = pathBits[i];
         int cx = (d.axis==0) ? ((d.dir==+1)?0:1) : (b & 1);
@@ -1678,7 +1705,7 @@ DensityOctree::Node* descendTowardInterface(DensityOctree::Node* nb, const std::
         int child = (cx) | (cy<<1) | (cz<<2);
         nb = &(*nb->children)[child];
     }
-    return nb; // may be leaf, null, or still internal (=> finer)
+    return nb;
 }
 
 int bitX(uint8_t childIndex) { return (childIndex >> 0) & 1; }
@@ -1688,16 +1715,14 @@ int bitZ(uint8_t childIndex) { return (childIndex >> 2) & 1; }
 DensityOctree::Node* DensityOctree::Node::get_face_neighbor(Face f) {
     Dir d = faceDir(f);
 
-    // Fast path: sibling inside the same parent
     if (this->parent) {
         int b = (d.axis==0) ? bitX(this->child_idx) : (d.axis==1) ? bitY(this->child_idx) : bitZ(this->child_idx);
         bool canStepInsideParent = (d.dir==+1 ? (b==0) : (b==1));
         if (canStepInsideParent) {
-            int acrossChild = this->child_idx ^ (1 << d.axis); // flip axis bit
+            int acrossChild = this->child_idx ^ (1 << d.axis);
             Node* nb = this->parent->children != nullptr ? &(*(this->parent->children))[acrossChild] : nullptr;
             if (!nb) return nullptr;
 
-            // Descend to the same level as 'n' (mirror original one step)
             std::vector<uint8_t> oneStep { (uint8_t)this->child_idx };
             nb = descendTowardInterface(nb, oneStep, d);
 
@@ -1706,22 +1731,21 @@ DensityOctree::Node* DensityOctree::Node::get_face_neighbor(Face f) {
         }
     }
 
-    // General path: climb until we can step across at an ancestor
-    std::vector<uint8_t> pathBits; // record n's childIndex at each climbed level
+    std::vector<uint8_t> pathBits;
     Node* a = this;
     Node* p = a->parent;
 
     while (p) {
         int b = (d.axis==0) ? bitX(a->child_idx) : (d.axis==1) ? bitY(a->child_idx) : bitZ(a->child_idx);
         bool onOuterSide = (d.dir==+1 ? (b==1) : (b==0));
-        if (!onOuterSide) break;          // can step at this ancestor
+        if (!onOuterSide) break;
         pathBits.push_back(a->child_idx);
         a = p;
         p = a->parent;
     }
 
     if (!p) {
-        // No ancestor to step across -> outside the tree boundary
+
         return nullptr;
     }
 
@@ -1729,7 +1753,6 @@ DensityOctree::Node* DensityOctree::Node::get_face_neighbor(Face f) {
     Node* nb = (p->children != nullptr) ? &(*p->children)[acrossChild] : nullptr;
     if (!nb) return nullptr;
 
-    // Descend on neighbor side to match 'n' depth
     nb = descendTowardInterface(nb, pathBits, d);
 
     if (!nb) return nullptr;
@@ -1877,32 +1900,11 @@ void addBackSamples4(SampleSet& S,
     S.pos[baseIndex + 3] = pTR; S.val[baseIndex + 3] = sd(W(pTR));
 }
 
-// uint16_t buildTransitionCaseIndex(const SampleSet& S, float iso) {
-//     uint32_t nearMask = 0;
-//     for (int i = 0; i < 9; ++i) {
-//         const uint32_t bit = (S.val[i] < iso) ? 1u : 0u;
-//         nearMask |= (bit << i);
-//     }
-
-//     uint32_t backMask = 0;
-//     for (int i = 0; i < 4; ++i) {
-//         const uint32_t bit = (S.val[i] < iso) ? 1u : 0u;
-//         backMask |= (bit << i);
-//     }
-
-//     uint32_t idx = (backMask << 9) | nearMask;
-
-//     return static_cast<uint16_t>(idx);
-// }
-
 inline uint8_t sign_bit(float d, float iso) {
-    // Quantize to make borderline values deterministic across passes.
-    // Tune EPS to your field's dynamic range; 1e-6f is a good start.
     constexpr float EPS = 1e-6f;
     float q = d - iso;
-    if (q <= -EPS) return 1u;   // "inside"
-    if (q >=  EPS) return 0u;   // "outside"
-    // Tie-breaker for |q| < EPS: bias to outside to avoid slivers
+    if (q <= -EPS) return 1u;
+    if (q >=  EPS) return 0u;
     return 0u;
 }
 
@@ -1911,59 +1913,10 @@ uint16_t buildTransitionCaseIndex(const SampleSet& S, float iso) {
     for (int i = 0; i < 9; ++i) {
         nearMask |= (uint32_t(sign_bit(S.val[i], iso)) << i);
     }
-    return (uint16_t)nearMask; // 0..511
+    return (uint16_t)nearMask;
 }
 
 TransitionTables T = buildTransitionTables();
-
-// void DensityOctree::Node::emit_transition(MCMesh& mesh, float iso, const std::function<float(vec3 pos)>& sd, DensityOctree::Node& nb, Face f) {
-//     float h = this->size;
-//     float H = this->size * 2.0f;
-//     float dz = h * 0.5f;
-
-// 	mat4 toFace = faceBasis(f, this->origin, h, this->child_idx);
-//     mat4 toWorld = inverse(toFace);
-
-//     for (int qy=0; qy<2; ++qy)
-//     for (int qx=0; qx<2; ++qx) {
-//         SampleSet S;
-//         gatherNearFaceSamples9(S, qx, qy, h, toWorld, sd);
-
-//         addBackSamples4(S, qx, qy, h, toWorld, sd);
-
-//         uint16_t tIndex = buildTransitionCaseIndex(S, iso);
-
-//         if (T.edgeTable[tIndex]==0) continue;
-
-// 		vec3 vlist[T.MAX_T_EDGES];
-// 		for (int e = 0; e < T.numEdges; ++e) {
-// 			if (T.edgeTable[tIndex] & (1 << e)) {
-// 				auto ep = T.edgeEndpoints(e, S);
-// 				vec3 w0 = toWorld * ep.p0;
-// 				vec3 w1 = toWorld * ep.p1;
-// 				vlist[e] = vertex_interp(iso, w0, w1, ep.d0, ep.d1);
-// 			}
-// 		}
-
-// 		int e2idx[T.MAX_T_EDGES];
-// 		for (int i = 0; i < T.MAX_T_EDGES; ++i) e2idx[i] = -1;
-
-// 		for (int t = 0; T.triTable[tIndex][t] != -1; t += 3) {
-// 			uint32_t triIdx[3];
-// 			for (int k = 0; k < 3; ++k) {
-// 				int e = T.triTable[tIndex][t + k];
-// 				if (e2idx[e] == -1) {
-// 					e2idx[e] = static_cast<uint32_t>(mesh.vertices.size());
-// 					mesh.vertices.push_back(vlist[e]);
-// 				}
-// 				triIdx[k] = e2idx[e];
-// 			}
-// 			mesh.indices.push_back(triIdx[0]);
-// 			mesh.indices.push_back(triIdx[1]);
-// 			mesh.indices.push_back(triIdx[2]);
-// 		}
-//     }
-// }
 
 void quadrantForFace(Face f, uint8_t childIndex, int& qx, int& qy) {
     switch (f) {
@@ -1973,47 +1926,115 @@ void quadrantForFace(Face f, uint8_t childIndex, int& qx, int& qy) {
     }
 }
 
+static inline void world_base_to_face_uv(const ivec3& coarseC, int coarseS, int face,
+                                         const ivec3& w, uint32_t& u, uint32_t& v) {
+    switch(face){
+        case 0: u = (uint32_t)(w.y - coarseC.y); v = (uint32_t)(w.z - coarseC.z); break;
+        case 1: u = (uint32_t)(w.y - coarseC.y); v = (uint32_t)(w.z - coarseC.z); break;
+        case 2: u = (uint32_t)(w.x - coarseC.x); v = (uint32_t)(w.z - coarseC.z); break;
+        case 3: u = (uint32_t)(w.x - coarseC.x); v = (uint32_t)(w.z - coarseC.z); break;
+        case 4: u = (uint32_t)(w.x - coarseC.x); v = (uint32_t)(w.y - coarseC.y); break;
+        default:u = (uint32_t)(w.x - coarseC.x); v = (uint32_t)(w.y - coarseC.y); break;
+    }
+}
 
-void DensityOctree::Node::emit_transition(MCMesh& mesh, float iso, const std::function<float(vec3 pos)>& sd, DensityOctree::Node& nb, Face f) {
-    const float h = this->size;
+static inline int dir_from_two_points_on_face(int face, const ivec3& w0, const ivec3& w1) {
+    switch(face){
+        case 0: case 1: return (w0.y != w1.y) ? 0 : 1;
+        case 2: case 3: return (w0.x != w1.x) ? 0 : 1;
+        default:        return (w0.x != w1.x) ? 0 : 1;
+    }
+}
 
-    mat4 toFace  = faceBasis(f, this->origin, h, this->child_idx);
+
+void DensityOctree::Node::emit_transition(
+    MCMesh& mesh, float iso, const std::function<float(vec3)>& sd,
+    DensityOctree::Node& nb, Face f)
+{
+    const float  fine_h_world   = this->size;
+    const float  coarse_h_world = nb.size;
+    const int    coarseSBase    = int(std::lround(coarse_h_world / mesh.base_h));
+    const ivec3     coarseCBase    = to_base(nb.origin, mesh.base_origin, mesh.base_h);
+
+    mat4 toFace  = faceBasis(f, this->origin, fine_h_world, this->child_idx);
     mat4 toWorld = inverse(toFace);
 
     SampleSet S;
     int qx=0, qy=0; quadrantForFace(f, this->child_idx, qx, qy);
-    gatherNearFaceSamples9(S, qx, qy, h, toWorld, sd);
-    addBackSamples4(S, qx, qy, h, toWorld, sd, h);
+    gatherNearFaceSamples9(S, qx, qy, fine_h_world, toWorld, sd);
+    addBackSamples4(S, qx, qy, fine_h_world, toWorld, sd, fine_h_world);
 
     const uint16_t tCase = buildTransitionCaseIndex(S, iso);
-
     static TransitionTables T = buildTransitionTables();
 
     const uint32_t mask = T.edgeTable[tCase];
     if (mask == 0) return;
 
-    std::array<vec3, TransitionTables::MAX_T_EDGES> vlist{};
-    for (int e=0; e<(int)T.edgeCount[tCase]; ++e) {
-        if (!(mask & (1u<<e))) continue;
+    std::array<int, TransitionTables::MAX_T_EDGES> vIdx{};
+    for (int e = 0; e < (int)T.edgeCount[tCase]; ++e) {
+        if (!(mask & (1u << e))) { vIdx[e] = -1; continue; }
+
         auto [fp0, fp1, d0, d1] = T.edgeEndpoints(tCase, e, S);
         vec3 w0 = transformPoint(toWorld, fp0);
         vec3 w1 = transformPoint(toWorld, fp1);
-        vlist[e] = vertex_interp(iso, w0, w1, d0, d1);
+
+        const ivec3 wb0 = to_base(w0, mesh.base_origin, mesh.base_h);
+        const ivec3 wb1 = to_base(w1, mesh.base_origin, mesh.base_h);
+
+        const int dirUV = dir_from_two_points_on_face((int)f, wb0, wb1);
+
+        ivec3 lowerW = ivec3{ std::min(wb0.x, wb1.x), std::min(wb0.y, wb1.y), std::min(wb0.z, wb1.z) };
+
+        uint32_t u0=0, v0=0;
+        world_base_to_face_uv(coarseCBase, coarseSBase, (int)f, lowerW, u0, v0);
+
+        const bool onBorder = is_face_edge_on_border(u0, v0, dirUV, coarseSBase);
+
+        auto face_creator = [&]() -> int {
+            vec3 P = vertex_interp(iso, w0, w1, d0, d1);
+            int id = (int)mesh.vertices.size();
+            mesh.vertices.push_back(P);
+            return id;
+        };
+
+        auto coarse_creator = [&]() -> int {
+            ivec3 mcLower; int mcAxis;
+            face_edge_to_coarse_mc_edge(coarseCBase, coarseSBase, (int)f, u0, v0, dirUV, mcLower, mcAxis);
+
+            vec3 pA = mesh.base_origin + vec3{ mcLower.x * mesh.base_h, mcLower.y * mesh.base_h, mcLower.z * mesh.base_h };
+            vec3 pB = pA;
+            if (mcAxis == 0) pB.x += coarseSBase * mesh.base_h;
+            else if (mcAxis == 1) pB.y += coarseSBase * mesh.base_h;
+            else                  pB.z += coarseSBase * mesh.base_h;
+
+            float dA = sd(pA);
+            float dB = sd(pB);
+            vec3  P  = vertex_interp(iso, pA, pB, dA, dB);
+
+            int id = (int)mesh.vertices.size();
+            mesh.vertices.push_back(P);
+            return id;
+        };
+
+        if (onBorder) {
+            ivec3 mcLower; int mcAxis;
+            face_edge_to_coarse_mc_edge(coarseCBase, coarseSBase, (int)f, u0, v0, dirUV, mcLower, mcAxis);
+            const uint64_t mcKey = mc_edge_key_from_lower_and_axis(mcLower, mcAxis);
+            vIdx[e] = mesh.mcEdgeCache.get_or_create(mcKey, coarse_creator);
+        } else {
+            const uint64_t feKey = face_edge_key(coarseCBase, coarseSBase, (int)f, u0, v0, dirUV);
+            vIdx[e] = mesh.faceEdgeCache.get_or_create(feKey, face_creator);
+        }
     }
 
-    for (int i=0; T.triTable[tCase][i] != -1; i += 3) {
+    for (int i = 0; T.triTable[tCase][i] != -1; i += 3) {
         const int e0 = T.triTable[tCase][i+0];
         const int e1 = T.triTable[tCase][i+1];
         const int e2 = T.triTable[tCase][i+2];
-
-        const uint32_t base = (uint32_t)mesh.vertices.size();
-        mesh.vertices.push_back(vlist[e0]);
-        mesh.vertices.push_back(vlist[e1]);
-        mesh.vertices.push_back(vlist[e2]);
-
-        mesh.indices.push_back(base+0);
-        mesh.indices.push_back(base+1);
-        mesh.indices.push_back(base+2);
+        if (vIdx[e0] < 0 || vIdx[e1] < 0 || vIdx[e2] < 0) continue;
+        mesh.indices.push_back((uint32_t)vIdx[e0]);
+        mesh.indices.push_back((uint32_t)vIdx[e1]);
+        mesh.indices.push_back((uint32_t)vIdx[e2]);
     }
 }
 
@@ -2035,22 +2056,6 @@ void DensityOctree::fill_transvoxel_data() {
 			(*node.children)[i].level = node.level + 1;
 		}
 	});
-}
-
-// -1 - prune, 0 - leave, 1 - extend
-int DensityOctree::Node::decide_fate(float band, float iso) {
-	if (is_corner()) return 0;
-
-    float dmin = std::numeric_limits<float>::max();
-	float dmax = std::numeric_limits<float>::min();
-    for (int i=0;i<8;++i) {
-        dmin = std::min(dmin, (*children)[i].density);
-        dmax = std::max(dmax, (*children)[i].density);
-    }
-
-	if (dmin > iso + band) return 1;
-	if (dmax < iso - band) return -1;
-	return 0;
 }
 
 bool DensityOctree::Node::intersects_band(float band, float iso) {

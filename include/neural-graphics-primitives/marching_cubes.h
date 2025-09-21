@@ -16,6 +16,7 @@
 
 #include <neural-graphics-primitives/bounding_box.cuh>
 #include <neural-graphics-primitives/common_host.h>
+#include <neural-graphics-primitives/vertex_cache.h>
 
 #include <tiny-cuda-nn/common.h>
 
@@ -85,6 +86,17 @@ vec3 vertex_interp(float iso, vec3 p1, vec3 p2, float d1, float d2);
 struct MCMesh {
 	std::vector<vec3> vertices;
 	std::vector<unsigned int> indices;
+	CPUHash64 mcEdgeCache;
+	CPUHash64 faceEdgeCache;
+
+	vec3   base_origin = {0,0,0};
+    float  base_h      = 1.0f; 
+
+    uint32_t add_vertex(const vec3& p) {
+        uint32_t id = (uint32_t)vertices.size();
+        vertices.push_back(p);
+        return id;
+    }
 };
 
 enum class Face {PX, NX, PY, NY, PZ, NZ};
@@ -130,7 +142,6 @@ public:
 		void emit_transition(MCMesh& mesh, float iso, const std::function<float(vec3 pos)>& sd, Node& nb, Face f);
 		std::vector<std::pair<Node&, Face>> get_neighors_faces();
 		Node* get_face_neighbor(Face f);
-		int decide_fate(float band, float iso);
 		bool intersects_band(float band, float iso);
   };
 
@@ -143,7 +154,7 @@ public:
 	float sample_nearest(int x, int y, int z);
 	float sample_trilinear(float nx, float ny, float nz);
 
-	MCMesh polygonize(float iso);
+	MCMesh polygonize(float iso, int max_tree_height);
 	void fill_transvoxel_data();
 
 private:
