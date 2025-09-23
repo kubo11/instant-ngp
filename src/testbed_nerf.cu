@@ -3165,32 +3165,6 @@ int Testbed::marching_cubes(ivec3 res3d, const BoundingBox& aabb, const mat3& re
 	density_cpu.resize(density.size());
 	density.copy_to_host(density_cpu);
 
-	auto aabb2 = BoundingBox(vec3(0.0f, 0.0f, 0.0f), vec3(1.9375f, 1.9375f, 1.9375f));
-	auto res3d2 = ivec3(32, 32, 32);
-	GPUMemory<float> density2 = get_density_on_grid(res3d2, aabb2, render_aabb_to_local);
-
-	std::vector<float> density_cpu2, density_cpu2_temp;
-	density_cpu2_temp.resize(density2.size());
-	density2.copy_to_host(density_cpu2_temp);
-	density_cpu2.resize(17 * 17 * 17);
-
-	for (int i = 0; i < 17; ++i) {
-		for (int j = 0; j < 17; ++j) {
-			for (int k = 0; k < 17; ++k) {
-				density_cpu2[i + 17 * j + 17 * 17 * k] = density_cpu2_temp[i + 32 * j + 32 * 32 * k];
-			}
-		}
-	}
-
-	bool same = true;
-
-	for (auto i = 0; i < density.size(); ++i) {
-		if (std::abs(density_cpu[i] - density_cpu2[i]) > 1e-9f) {
-			same = false;
-			break;
-		}
-	}
-
 	float min = 10e8;
 	float max = -10e8;
 	float avg = 0.0f;
@@ -3344,7 +3318,7 @@ int Testbed::marching_cubes_octree(int sample_res, const BoundingBox& aabb, cons
   m_mesh.verts_optimizer->allocate(m_mesh.trainable_verts);
 
   compute_mesh_1ring(m_mesh.verts, m_mesh.indices, m_mesh.verts_smoothed, m_mesh.vert_normals);
-//   compute_mesh_vertex_colors();
+  compute_mesh_vertex_colors();
   
   return (int)(m_mesh.indices.size()/3);
 }
