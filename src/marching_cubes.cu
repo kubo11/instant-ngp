@@ -1139,8 +1139,8 @@ DensityOctree DensityOctree::init(vec3 origin, float size) {
 	return DensityOctree(std::move(Node(origin, size)));
 }
 
-void DensityOctree::build(int res, float min_density, int max_tree_height, const std::function<std::vector<float>(const vec3& origin, float size)>& get_density_on_grid) {
-	m_root.extend(res, 0, max_tree_height, min_density, get_density_on_grid);
+void DensityOctree::build(int res, float min_density, float band, unsigned int req_num_of_children, int max_tree_height, const std::function<std::vector<float>(const vec3& origin, float size)>& get_density_on_grid) {
+	m_root.extend(res, 0, max_tree_height, min_density, band, req_num_of_children, get_density_on_grid);
 	fill_transvoxel_data();
 }
 
@@ -1168,8 +1168,7 @@ bool DensityOctree::Node::is_intermediate() const {
 	return !is_corner() && !is_leaf();
 }
 
-void DensityOctree::Node::extend(int res, int depth, int max_tree_height, float min_density, const std::function<std::vector<float>(const vec3& origin, float size)>& get_density_on_grid) {
-	float band = 0.01f;
+void DensityOctree::Node::extend(int res, int depth, int max_tree_height, float min_density, float band, unsigned int req_num_of_children, const std::function<std::vector<float>(const vec3& origin, float size)>& get_density_on_grid) {
 	auto grid_res = res + 1;
 	auto density = get_density_on_grid(origin, size);
 	auto leaf_nodes = std::vector<DensityOctree::Node>();
@@ -1190,11 +1189,11 @@ void DensityOctree::Node::extend(int res, int depth, int max_tree_height, float 
 					leaf_nodes.back().density += (*leaf_nodes.back().children)[i].density;
 				}
 				leaf_nodes.back().density /= 8.0f;
-				if (!leaf_nodes.back().intersects_band(band, min_density)) {
+				if (!leaf_nodes.back().intersects_band(band, min_density, req_num_of_children)) {
 					if (leaf_nodes.back().density < min_density) leaf_nodes.back().children = nullptr;
 				}
 				else {
-					if (leaf_depth < max_tree_height) leaf_nodes.back().extend(res, leaf_depth, max_tree_height, min_density, get_density_on_grid);
+					if (leaf_depth < max_tree_height) leaf_nodes.back().extend(res, leaf_depth, max_tree_height, min_density, band, req_num_of_children, get_density_on_grid);
 				}
 			}
 		}
@@ -1216,7 +1215,7 @@ void DensityOctree::Node::extend(int res, int depth, int max_tree_height, float 
 						intermediate_nodes.back().density += (*intermediate_nodes.back().children)[i].density;
 					}
 					intermediate_nodes.back().density /= 8.0f;
-					if (!intermediate_nodes.back().intersects_band(band, min_density)) {
+					if (!intermediate_nodes.back().intersects_band(band, min_density, req_num_of_children)) {
 						if (intermediate_nodes.back().density < min_density) intermediate_nodes.back().children = nullptr;
 					}
 				}
@@ -1231,7 +1230,7 @@ void DensityOctree::Node::extend(int res, int depth, int max_tree_height, float 
 		this->density += (*children)[i].density;
 	}
 	this->density /= 8.0f;
-	if (!this->intersects_band(band, min_density)) {
+	if (!this->intersects_band(band, min_density, req_num_of_children)) {
 		if (this->density < min_density) this->children = nullptr;
 	}
 }
@@ -2058,17 +2057,17 @@ void DensityOctree::fill_transvoxel_data() {
 	});
 }
 
-bool DensityOctree::Node::intersects_band(float band, float iso) {
-	if (is_corner()) return 0;
+bool DensityOctree::Node::intersects_band(float band, float iso, unsigned int req_num_of_children) {
+	if (is_corner()) return false;
 
-    float dmin = std::numeric_limits<float>::max();
-	float dmax = std::numeric_limits<float>::min();
+	unsigned int num_of_children = 0;
     for (int i=0;i<8;++i) {
-        dmin = std::min(dmin, (*children)[i].density);
-        dmax = std::max(dmax, (*children)[i].density);
+		if ((*children)[i].density <= iso + band && (*children)[i].density >= iso - band) {
+			num_of_children++;
+		}
     }
 
-	return (dmin <= iso + band) && (dmax >= iso - band);;
+	return num_of_children >= req_num_of_children;
 }
 
 }

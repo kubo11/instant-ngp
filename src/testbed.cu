@@ -1675,10 +1675,12 @@ void Testbed::imgui() {
 	if (m_testbed_mode == ETestbedMode::Nerf) {
 		if (ImGui::CollapsingHeader("Export mesh - octree")) {
 			static int sample_res = 8, max_height = 5;
-			static float min_density = 0.216f;
+			static float min_density = 0.001f;
+			static float band = 0.01f;
+			static int req_num_of_children = 8;
 
 			if (imgui_colored_button("Mesh it!", 0.4f)) {
-				marching_cubes_octree(sample_res, m_render_aabb, m_render_aabb_to_local, min_density, max_height);
+				marching_cubes_octree(sample_res, m_render_aabb, m_render_aabb_to_local, min_density, band, (unsigned int)req_num_of_children, max_height);
 				m_nerf.render_with_lens_distortion = false;
 			}
 			if (m_mesh.indices.size()>0) {
@@ -1698,8 +1700,9 @@ void Testbed::imgui() {
 				sample_res = 16;
 			}
 			ImGui::SliderInt("Max octree height", &max_height, 1, 10, "%d");
-			float min_density_range = 10.f;
-			ImGui::DragFloat("Octree density threshold", &min_density, 0.005f, -min_density_range, min_density_range);
+			ImGui::DragFloat("Octree density threshold", &min_density, 0.001f, 0.0f, 1.0f);
+			ImGui::DragFloat("Octree density band", &band, 0.001f, 0.0f, 0.5f);
+			ImGui::SliderInt("Required number of children in band", &req_num_of_children, 1, 8, "%d");
 		
 			ImGui::Combo("Mesh render mode", (int*)&m_mesh_render_mode, "Off\0Vertex Colors\0Vertex Normals\0\0");
 			if (uint32_t tricount = m_mesh.indices.size()/3) {

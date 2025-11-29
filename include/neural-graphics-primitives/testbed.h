@@ -443,8 +443,8 @@ public:
 	GPUMemory<float> get_sdf_gt_on_grid(ivec3 res3d, const BoundingBox& aabb, const mat3& render_aabb_to_local); // sdf gt version (sdf only)
 	GPUMemory<vec4> get_rgba_on_grid(ivec3 res3d, vec3 ray_dir, bool voxel_centers, float depth, bool density_as_alpha = false);
 	int marching_cubes(ivec3 res3d, const BoundingBox& render_aabb, const mat3& render_aabb_to_local, float thresh);
-	DensityOctree build_density_octree(int sample_res, const BoundingBox& aabb, const mat3& render_aabb_to_local, float min_density, int max_tree_height);
-  int marching_cubes_octree(int sample_res, const BoundingBox& aabb, const mat3& render_aabb_to_local, float min_density, int max_tree_height);
+	DensityOctree build_density_octree(int sample_res, const BoundingBox& aabb, const mat3& render_aabb_to_local, float min_density, float band, unsigned int req_num_of_children, int max_tree_height);
+	int marching_cubes_octree(int sample_res, const BoundingBox& aabb, const mat3& render_aabb_to_local, float min_density, float band, unsigned int req_num_of_children, int max_tree_height);
 
 	float get_depth_from_renderbuffer(const CudaRenderBuffer& render_buffer, const vec2& uv);
 	vec3 get_3d_pos_from_pixel(const CudaRenderBuffer& render_buffer, const vec2& focus_pixel);

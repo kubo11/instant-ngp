@@ -3208,7 +3208,7 @@ int Testbed::marching_cubes(ivec3 res3d, const BoundingBox& aabb, const mat3& re
 	return (int)(m_mesh.indices.size()/3);
 }
 
-DensityOctree Testbed::build_density_octree(int sample_res, const BoundingBox& aabb, const mat3& render_aabb_to_local, float min_density, int max_tree_height) {
+DensityOctree Testbed::build_density_octree(int sample_res, const BoundingBox& aabb, const mat3& render_aabb_to_local, float min_density, float band, unsigned int req_num_of_children, int max_tree_height) {
 	sample_res = next_multiple((unsigned int)sample_res, 2u);
 	auto actual_res = sample_res + 1;
 	auto query_res = sample_res * 2;
@@ -3234,60 +3234,13 @@ DensityOctree Testbed::build_density_octree(int sample_res, const BoundingBox& a
 	};
 
 	auto density_octree = DensityOctree::init(aabb.min, aabb.max.x-aabb.min.x);	
-	density_octree.build(sample_res, min_density, max_tree_height, get_density_on_grid_cpu);
+	density_octree.build(sample_res, min_density, band, req_num_of_children, max_tree_height, get_density_on_grid_cpu);
 
 	return density_octree;
 }
 
-DensityOctree mock_density_octree() {
-	std::array<int, 8> diagonals = {6, 7, 4, 5, 2, 3, 0, 1};
-	auto density_octree = DensityOctree::init(vec3(0.0f, 0.0f, 0.0f), 1.0f);
-	density_octree.get_root().density = 0.125f;
-	density_octree.get_root().children = std::make_unique<std::array<DensityOctree::Node, 8>>();
-	for (int i = 0; i < 8; ++i) {
-		(*density_octree.get_root().children)[i].size = density_octree.get_root().size / 2.0f;
-		(*density_octree.get_root().children)[i].origin = density_octree.get_root().origin + DensityOctree::s_corner_offsets[i] * (*density_octree.get_root().children)[i].size;
-		(*density_octree.get_root().children)[i].density = 0.125f;
-		(*density_octree.get_root().children)[i].children = std::make_unique<std::array<DensityOctree::Node, 8>>();
-		for (int j = 0; j < 8; ++j) {
-			(*(*density_octree.get_root().children)[i].children)[j].size = (*density_octree.get_root().children)[i].size / 2.0f;
-			(*(*density_octree.get_root().children)[i].children)[j].origin = (*density_octree.get_root().children)[i].origin + DensityOctree::s_corner_offsets[j] * (*(*density_octree.get_root().children)[i].children)[j].size;
-			if (j == diagonals[i]) {
-				(*(*density_octree.get_root().children)[i].children)[j].density = 1.0f;
-				(*(*density_octree.get_root().children)[i].children)[j].children = std::make_unique<std::array<DensityOctree::Node, 8>>();
-				for (int k = 0; k < 8; ++k) {
-					(*(*(*density_octree.get_root().children)[i].children)[j].children)[k].size = (*(*density_octree.get_root().children)[i].children)[j].size / 2.0f;
-					(*(*(*density_octree.get_root().children)[i].children)[j].children)[k].origin = (*(*density_octree.get_root().children)[i].children)[j].origin + DensityOctree::s_corner_offsets[k] * (*(*(*density_octree.get_root().children)[i].children)[j].children)[k].size;
-					(*(*(*density_octree.get_root().children)[i].children)[j].children)[k].density = 1.0f;
-				}
-			}
-		}
-	}
-	return density_octree;
-}
-
-DensityOctree mock_density_octree2() {
-	auto density_octree = DensityOctree::init(vec3(0.0f, 0.0f, 0.0f), 1.0f);
-	auto get_density_on_grid = [](const vec3& origin, float size) -> std::vector<float>{
-		auto res = 9;
-		std::vector<float> density(res*res*res, 0.0f);
-		if (origin != vec3(0.0f, 0.0f, 0.0f) || size != 1.0f) return density;
-		for (int z = 2; z < 7; ++z) {
-			for (int y = 2; y < 7; ++y) {
-				for (int x = 2; x < 7; ++x) {
-					density[x + res * y + res * res * z] = 1.0f;
-				}
-			}
-		}
-		return density;
-	};
-	density_octree.get_root().extend(8, 0, 3, 0.5f, get_density_on_grid);
-
-	return density_octree;
-}
-
-int Testbed::marching_cubes_octree(int sample_res, const BoundingBox& aabb, const mat3& render_aabb_to_local, float min_density, int max_tree_height) {
-  auto density_octree = build_density_octree(sample_res, aabb, render_aabb_to_local, min_density, max_tree_height);
+int Testbed::marching_cubes_octree(int sample_res, const BoundingBox& aabb, const mat3& render_aabb_to_local, float min_density, float band, unsigned int req_num_of_children, int max_tree_height) {
+  auto density_octree = build_density_octree(sample_res, aabb, render_aabb_to_local, min_density, band, req_num_of_children, max_tree_height);
   auto mesh = density_octree.polygonize(min_density/* TODO */, max_tree_height);
   for (auto& vert : mesh.vertices) {
 	vert = transpose(render_aabb_to_local) * vert;

@@ -132,7 +132,7 @@ public:
 		bool is_leaf() const;
 		bool is_intermediate() const;
 
-		void extend(int res, int depth, int max_tree_height, float min_density, const std::function<std::vector<float>(const vec3& origin, float size)>& get_density_on_grid);
+		void extend(int res, int depth, int max_tree_height, float min_density, float band, unsigned int req_num_of_children, const std::function<std::vector<float>(const vec3& origin, float size)>& get_density_on_grid);
 		void traverse(const std::function<void(Node&)>& fun);
 		float sample_density(vec3 pos);
 		void polygonize(MCMesh& mesh, float iso, const std::function<float(vec3 pos)>& sample_density);
@@ -142,11 +142,11 @@ public:
 		void emit_transition(MCMesh& mesh, float iso, const std::function<float(vec3 pos)>& sd, Node& nb, Face f);
 		std::vector<std::pair<Node&, Face>> get_neighors_faces();
 		Node* get_face_neighbor(Face f);
-		bool intersects_band(float band, float iso);
+		bool intersects_band(float band, float iso, unsigned int req_num_of_children);
   };
 
 	static DensityOctree init(vec3 origin, float size);
-	void build(int res, float min_density, int max_tree_height, const std::function<std::vector<float>(const vec3& origin, float size)>& get_density_on_grid);
+	void build(int res, float min_density, float band, unsigned int req_num_of_children, int max_tree_height, const std::function<std::vector<float>(const vec3& origin, float size)>& get_density_on_grid);
 
 	DensityOctree::Node& get_root();
 	void traverse(const std::function<void(Node&)>& fun);
