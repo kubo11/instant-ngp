@@ -1320,12 +1320,12 @@ inline uint64_t mc_edge_key_from_tables(const ivec3& cellMinBase, int cellSizeBa
          | uint64_t(axis & 3);
 }
 
-MCMesh DensityOctree::polygonize(float iso, int max_tree_height) {
+MCMesh DensityOctree::polygonize(float iso, float band, int max_tree_height) {
 	MCMesh mesh{};
 	mesh.base_h = 1.0f / (1 << max_tree_height);
 
-	traverse([&mesh, &iso, this](Node& node) {
-		if (node.is_leaf()) node.polygonize(mesh, iso, std::bind(&DensityOctree::sample_density, this, std::placeholders::_1));
+	traverse([&mesh, &iso, &band, this](Node& node) {
+		if (node.is_leaf()) node.polygonize(mesh, iso, band, std::bind(&DensityOctree::sample_density, this, std::placeholders::_1));
 	});
 
 	mesh.mcEdgeCache.clear();
@@ -1614,12 +1614,12 @@ static constexpr int8_t triangle_table[256][16] =
 	{-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}
 };
 
-void DensityOctree::Node::polygonize(MCMesh& mesh, float iso, const std::function<float(vec3 pos)>& sample_density) {
-	polygonize_marching_cubes(mesh, iso);
-	polygonize_transvoxel(mesh, iso, sample_density);
+void DensityOctree::Node::polygonize(MCMesh& mesh, float iso, float band, const std::function<float(vec3 pos)>& sample_density) {
+	polygonize_marching_cubes(mesh, iso, band);
+	polygonize_transvoxel(mesh, iso, band, sample_density);
 }
 
-void DensityOctree::Node::polygonize_marching_cubes(MCMesh& mesh, float iso) {
+void DensityOctree::Node::polygonize_marching_cubes(MCMesh& mesh, float iso, float band) {
     std::array<vec3, 8>  corner_pos;
     std::array<float, 8> corner_densities;
 
@@ -1630,7 +1630,7 @@ void DensityOctree::Node::polygonize_marching_cubes(MCMesh& mesh, float iso) {
 
     int cubeIndex = 0;
     for (int i = 0; i < 8; ++i) {
-        if (corner_densities[i] < iso) cubeIndex |= (1 << i);
+        if (corner_densities[i] >= iso - band && corner_densities[i] <= iso + band) cubeIndex |= (1 << i);
     }
     if (edge_table[cubeIndex] == 0) return;
 
@@ -1899,18 +1899,17 @@ void addBackSamples4(SampleSet& S,
     S.pos[baseIndex + 3] = pTR; S.val[baseIndex + 3] = sd(W(pTR));
 }
 
-inline uint8_t sign_bit(float d, float iso) {
-    constexpr float EPS = 1e-6f;
+inline uint8_t sign_bit(float d, float iso, float band) {
     float q = d - iso;
-    if (q <= -EPS) return 1u;
-    if (q >=  EPS) return 0u;
+    if (q <= -band) return 1u;
+    if (q >=  band) return 0u;
     return 0u;
 }
 
-uint16_t buildTransitionCaseIndex(const SampleSet& S, float iso) {
+uint16_t buildTransitionCaseIndex(const SampleSet& S, float iso, float band) {
     uint32_t nearMask = 0u;
     for (int i = 0; i < 9; ++i) {
-        nearMask |= (uint32_t(sign_bit(S.val[i], iso)) << i);
+        nearMask |= (uint32_t(sign_bit(S.val[i], iso, band)) << i);
     }
     return (uint16_t)nearMask;
 }
@@ -1947,7 +1946,7 @@ static inline int dir_from_two_points_on_face(int face, const ivec3& w0, const i
 
 
 void DensityOctree::Node::emit_transition(
-    MCMesh& mesh, float iso, const std::function<float(vec3)>& sd,
+    MCMesh& mesh, float iso, float band, const std::function<float(vec3)>& sd,
     DensityOctree::Node& nb, Face f)
 {
     const float  fine_h_world   = this->size;
@@ -1963,7 +1962,7 @@ void DensityOctree::Node::emit_transition(
     gatherNearFaceSamples9(S, qx, qy, fine_h_world, toWorld, sd);
     addBackSamples4(S, qx, qy, fine_h_world, toWorld, sd, fine_h_world);
 
-    const uint16_t tCase = buildTransitionCaseIndex(S, iso);
+    const uint16_t tCase = buildTransitionCaseIndex(S, iso, band);
     static TransitionTables T = buildTransitionTables();
 
     const uint32_t mask = T.edgeTable[tCase];
@@ -2037,11 +2036,11 @@ void DensityOctree::Node::emit_transition(
     }
 }
 
-void DensityOctree::Node::polygonize_transvoxel(MCMesh& mesh, float iso, const std::function<float(vec3 pos)>& sample_density) {
+void DensityOctree::Node::polygonize_transvoxel(MCMesh& mesh, float iso, float band, const std::function<float(vec3 pos)>& sample_density) {
     for (auto& [nb, f] : get_neighors_faces()) {
-        if (nb.size == size) continue;
-        if (nb.size == size*2) {
-            emit_transition(mesh, iso, sample_density, nb, f);
+        if (std::abs(nb.size - size) < 10e-6) continue;
+        if (std::abs(nb.size - size*2) < 10e-6) {
+            emit_transition(mesh, iso, band, sample_density, nb, f);
         }
     }
 }

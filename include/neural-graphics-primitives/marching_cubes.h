@@ -135,11 +135,11 @@ public:
 		void extend(int res, int depth, int max_tree_height, float min_density, float band, unsigned int req_num_of_children, const std::function<std::vector<float>(const vec3& origin, float size)>& get_density_on_grid);
 		void traverse(const std::function<void(Node&)>& fun);
 		float sample_density(vec3 pos);
-		void polygonize(MCMesh& mesh, float iso, const std::function<float(vec3 pos)>& sample_density);
-		void polygonize_marching_cubes(MCMesh& mesh, float iso);
-		void polygonize_transvoxel(MCMesh& mesh, float iso, const std::function<float(vec3 pos)>& sample_density);
+		void polygonize(MCMesh& mesh, float iso, float band, const std::function<float(vec3 pos)>& sample_density);
+		void polygonize_marching_cubes(MCMesh& mesh, float iso, float band);
+		void polygonize_transvoxel(MCMesh& mesh, float iso, float band, const std::function<float(vec3 pos)>& sample_density);
 
-		void emit_transition(MCMesh& mesh, float iso, const std::function<float(vec3 pos)>& sd, Node& nb, Face f);
+		void emit_transition(MCMesh& mesh, float iso, float band, const std::function<float(vec3 pos)>& sd, Node& nb, Face f);
 		std::vector<std::pair<Node&, Face>> get_neighors_faces();
 		Node* get_face_neighbor(Face f);
 		bool intersects_band(float band, float iso, unsigned int req_num_of_children);
@@ -154,7 +154,7 @@ public:
 	float sample_nearest(int x, int y, int z);
 	float sample_trilinear(float nx, float ny, float nz);
 
-	MCMesh polygonize(float iso, int max_tree_height);
+	MCMesh polygonize(float iso, float band, int max_tree_height);
 	void fill_transvoxel_data();
 
 private:
