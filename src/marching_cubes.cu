@@ -1190,7 +1190,7 @@ void DensityOctree::Node::extend(int res, int depth, int max_tree_height, float 
 				}
 				leaf_nodes.back().density /= 8.0f;
 				if (!leaf_nodes.back().intersects_band(band, min_density, req_num_of_children)) {
-					if (leaf_nodes.back().density < min_density) leaf_nodes.back().children = nullptr;
+					leaf_nodes.back().children.reset(nullptr);
 				}
 				else {
 					if (leaf_depth < max_tree_height) leaf_nodes.back().extend(res, leaf_depth, max_tree_height, min_density, band, req_num_of_children, get_density_on_grid);
@@ -1216,7 +1216,7 @@ void DensityOctree::Node::extend(int res, int depth, int max_tree_height, float 
 					}
 					intermediate_nodes.back().density /= 8.0f;
 					if (!intermediate_nodes.back().intersects_band(band, min_density, req_num_of_children)) {
-						if (intermediate_nodes.back().density < min_density) intermediate_nodes.back().children = nullptr;
+						intermediate_nodes.back().children.reset(nullptr);
 					}
 				}
 			}
@@ -1630,7 +1630,7 @@ void DensityOctree::Node::polygonize_marching_cubes(MCMesh& mesh, float iso, flo
 
     int cubeIndex = 0;
     for (int i = 0; i < 8; ++i) {
-        if (corner_densities[i] >= iso - band && corner_densities[i] <= iso + band) cubeIndex |= (1 << i);
+		if (corner_densities[i] > iso) cubeIndex |= (1 << i);
     }
     if (edge_table[cubeIndex] == 0) return;
 

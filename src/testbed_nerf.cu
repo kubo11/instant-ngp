@@ -241,8 +241,6 @@ __global__ void grid_samples_half_to_float(const uint32_t n_elements, BoundingBo
 	// float mlp = network_to_density(float(network_output[i * padded_output_width]), density_activation);
 	float mlp = float(network_output[i]);
 
-	mlp = 1.0f / (1.0f + expf(-mlp));
-	mlp = mlp * (1.0f - mlp);
 
 	// if (grid_in) {
 	// 	vec3 pos = unwarp_position(coords_in[i].p, aabb);

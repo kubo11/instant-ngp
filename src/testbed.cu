@@ -1700,8 +1700,8 @@ void Testbed::imgui() {
 				sample_res = 16;
 			}
 			ImGui::SliderInt("Max octree height", &max_height, 1, 10, "%d");
-			ImGui::DragFloat("Octree density threshold", &min_density, 0.001f, 0.0f, 1.0f);
-			ImGui::DragFloat("Octree density band", &band, 0.001f, 0.0f, 0.5f);
+			ImGui::DragFloat("Octree density threshold", &min_density, 0.001f, 0.0f, 10.0f);
+			ImGui::DragFloat("Octree density band", &band, 0.001f, 0.0f, 15.0f);
 			ImGui::SliderInt("Required number of children in band", &req_num_of_children, 1, 8, "%d");
 		
 			ImGui::Combo("Mesh render mode", (int*)&m_mesh_render_mode, "Off\0Vertex Colors\0Vertex Normals\0\0");
