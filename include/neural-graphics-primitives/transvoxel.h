@@ -8,21 +8,19 @@
 #include <cassert>
 
 namespace ngp {
-struct TransitionCellData
-{
-	long			geometryCounts;		// High nibble is vertex count, low nibble is triangle count.
-	unsigned char	vertexIndex[36];	// Groups of 3 indexes giving the triangulation.
+struct TransitionCellData {
+	long geometryCounts;
+	unsigned char vertexIndex[36];
 	
-	long GetVertexCount(void) const
-	{
+	long get_vertex_count(void) const {
 		return (geometryCounts >> 4);
 	}
 	
-	long GetTriangleCount(void) const
-	{
+	long get_triangle_count(void) const {
 		return (geometryCounts & 0x0F);
 	}
 };
+
 static constexpr uint8_t transitionCellClass[512] = {
   0x00, 0x01, 0x02, 0x84, 0x01, 0x05, 0x04, 0x04, 0x02, 0x87, 0x09, 0x8C, 0x84, 0x0B, 0x05, 0x05,
   0x01, 0x08, 0x07, 0x8D, 0x05, 0x0F, 0x8B, 0x0B, 0x04, 0x0D, 0x0C, 0x1C, 0x04, 0x8B, 0x85, 0x85,
@@ -57,6 +55,7 @@ static constexpr uint8_t transitionCellClass[512] = {
   0x05, 0x05, 0x0B, 0x84, 0x2F, 0x26, 0x35, 0x84, 0x8B, 0x0B, 0x8F, 0x85, 0xB5, 0x87, 0x34, 0x81,
   0x85, 0x85, 0x8B, 0x04, 0xA6, 0x25, 0x07, 0x82, 0x84, 0x84, 0x85, 0x81, 0x04, 0x82, 0x81, 0x80
 };
+
 static constexpr TransitionCellData transitionCellData[] = {
   {0x00, {}},
   {0x42, {0, 1, 3, 1, 2, 3}},
@@ -115,6 +114,7 @@ static constexpr TransitionCellData transitionCellData[] = {
   {0xA8, {0, 1, 5, 1, 4, 5, 1, 2, 4, 2, 3, 4, 3, 6, 7, 3, 7, 4, 0, 8, 9, 0, 5, 8}},
   {0xA8, {0, 1, 5, 1, 4, 5, 1, 2, 4, 2, 3, 4, 2, 6, 3, 3, 6, 7, 0, 8, 9, 0, 5, 8}}
 };
+
 static constexpr uint16_t transitionVertexData[512][16] = {
   {},
   {0x2301, 0x1503, 0x199B, 0x289A},
@@ -640,9 +640,9 @@ struct TransitionTables {
     static constexpr int MAX_T_EDGES   = 24;
     static constexpr int MAX_T_TRIIDX  = 64;
 
-    std::array<uint32_t,512> edgeTable{};
+    std::array<uint32_t,512> edges{};
     std::array<std::array<int8_t,MAX_T_TRIIDX>,512> triTable{};
-    std::array<uint8_t,512> edgeCount{};
+    std::array<uint8_t,512> edge_count{};
     std::array<std::array<uint8_t,2*MAX_T_EDGES>,512> edgeAB{};
 
     template<class SampleSet>

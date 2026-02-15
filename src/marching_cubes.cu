@@ -1994,17 +1994,16 @@ static inline int dir_from_two_points_on_face(int face, const ivec3& w0, const i
     }
 }
 
-
 void DensityOctree::Node::emit_transition(
     MCMesh& mesh, float iso, float band, const std::function<float(vec3)>& sd,
     DensityOctree::Node& nb, Face f)
 {
     const float fine_h_world = this->size;
     const float coarse_h_world = nb.size;
-    const int coarseSBase = int(std::lround(coarse_h_world / mesh.base_h));
-    const ivec3 coarseCBase = to_base(nb.origin, mesh.base_origin, mesh.base_h);
+    const int coarse_off = int(std::lround(coarse_h_world / mesh.base_h));
+    const ivec3 coarse_base = to_base(nb.origin, mesh.base_origin, mesh.base_h);
 
-    mat4 to_face  = face_basis(f, this->origin, fine_h_world, this->child_idx);
+    mat4 to_face = face_basis(f, this->origin, fine_h_world, this->child_idx);
     mat4 to_world = inverse(to_face);
 
     SampleSet S;
@@ -2013,31 +2012,34 @@ void DensityOctree::Node::emit_transition(
     gather_near_face_samples(S, qx, qy, fine_h_world, to_world, sd);
     add_back_samples(S, qx, qy, fine_h_world, to_world, sd, fine_h_world);
 
-    const uint16_t tCase = build_transition_case_index(S, iso, band);
+    const uint16_t t_case = build_transition_case_index(S, iso, band);
     static TransitionTables T = buildTransitionTables();
 
-    const uint32_t mask = T.edgeTable[tCase];
+    const uint32_t mask = T.edges[t_case];
     if (mask == 0) return;
 
-    std::array<int, TransitionTables::MAX_T_EDGES> vIdx{};
-    for (int e = 0; e < (int)T.edgeCount[tCase]; ++e) {
-        if (!(mask & (1u << e))) { vIdx[e] = -1; continue; }
+    std::array<int, TransitionTables::MAX_T_EDGES> v_idx{};
+    for (int e = 0; e < (int)T.edge_count[t_case]; ++e) {
+        if (!(mask & (1u << e))) {
+			v_idx[e] = -1;
+			continue;
+		}
 
-        auto [fp0, fp1, d0, d1] = T.edgeEndpoints(tCase, e, S);
-        vec3 w0 = transform_point(toWorld, fp0);
-        vec3 w1 = transform_point(toWorld, fp1);
+        auto [fp0, fp1, d0, d1] = T.edgeEndpoints(t_case, e, S);
+        vec3 w0 = transform_point(to_world, fp0);
+        vec3 w1 = transform_point(to_world, fp1);
 
         const ivec3 wb0 = to_base(w0, mesh.base_origin, mesh.base_h);
         const ivec3 wb1 = to_base(w1, mesh.base_origin, mesh.base_h);
 
-        const int dirUV = dir_from_two_points_on_face((int)f, wb0, wb1);
+        const int dir_uv = dir_from_two_points_on_face((int)f, wb0, wb1);
 
-        ivec3 lowerW = ivec3{ std::min(wb0.x, wb1.x), std::min(wb0.y, wb1.y), std::min(wb0.z, wb1.z) };
+        ivec3 lower_w = ivec3{ std::min(wb0.x, wb1.x), std::min(wb0.y, wb1.y), std::min(wb0.z, wb1.z) };
 
-        uint32_t u0=0, v0=0;
-        world_base_to_face_uv(coarseCBase, coarseSBase, (int)f, lowerW, u0, v0);
+        uint32_t u0 = 0, v0 = 0;
+        world_base_to_face_uv(coarse_base, (int)f, lower_w, u0, v0);
 
-        const bool onBorder = is_face_edge_on_border(u0, v0, dirUV, coarseSBase);
+        const bool onBorder = is_face_edge_on_border(u0, v0, dir_uv, coarse_off);
 
         auto face_creator = [&]() -> int {
             vec3 P = vertex_interp(iso, w0, w1, d0, d1);
@@ -2048,17 +2050,17 @@ void DensityOctree::Node::emit_transition(
 
         auto coarse_creator = [&]() -> int {
             ivec3 mcLower; int mcAxis;
-            face_edge_to_coarse_mc_edge(coarseCBase, coarseSBase, (int)f, u0, v0, dirUV, mcLower, mcAxis);
+            face_edge_to_coarse_mc_edge(coarse_base, coarse_off, (int)f, u0, v0, dir_uv, mcLower, mcAxis);
 
-            vec3 pA = mesh.base_origin + vec3{ mcLower.x * mesh.base_h, mcLower.y * mesh.base_h, mcLower.z * mesh.base_h };
+            vec3 pA = mesh.base_origin + vec3{mcLower.x * mesh.base_h, mcLower.y * mesh.base_h, mcLower.z * mesh.base_h};
             vec3 pB = pA;
-            if (mcAxis == 0) pB.x += coarseSBase * mesh.base_h;
-            else if (mcAxis == 1) pB.y += coarseSBase * mesh.base_h;
-            else                  pB.z += coarseSBase * mesh.base_h;
+            if (mcAxis == 0) pB.x += coarse_off * mesh.base_h;
+            else if (mcAxis == 1) pB.y += coarse_off * mesh.base_h;
+            else pB.z += coarse_off * mesh.base_h;
 
             float dA = sd(pA);
             float dB = sd(pB);
-            vec3  P  = vertex_interp(iso, pA, pB, dA, dB);
+            vec3 P = vertex_interp(iso, pA, pB, dA, dB);
 
             int id = (int)mesh.vertices.size();
             mesh.vertices.push_back(P);
@@ -2067,23 +2069,23 @@ void DensityOctree::Node::emit_transition(
 
         if (onBorder) {
             ivec3 mcLower; int mcAxis;
-            face_edge_to_coarse_mc_edge(coarseCBase, coarseSBase, (int)f, u0, v0, dirUV, mcLower, mcAxis);
+            face_edge_to_coarse_mc_edge(coarse_base, coarse_off, (int)f, u0, v0, dir_uv, mcLower, mcAxis);
             const uint64_t mcKey = mc_edge_key_from_lower_and_axis(mcLower, mcAxis);
-            vIdx[e] = mesh.mcEdgeCache.get_or_create(mcKey, coarse_creator);
+            v_idx[e] = mesh.edge_cache.get_or_create(mcKey, coarse_creator);
         } else {
-            const uint64_t feKey = face_edge_key(coarseCBase, coarseSBase, (int)f, u0, v0, dirUV);
-            vIdx[e] = mesh.faceEdgeCache.get_or_create(feKey, face_creator);
+            const uint64_t feKey = face_edge_key(coarse_base, coarse_off, (int)f, u0, v0, dir_uv);
+            v_idx[e] = mesh.face_cache.get_or_create(feKey, face_creator);
         }
     }
 
-    for (int i = 0; T.triTable[tCase][i] != -1; i += 3) {
-        const int e0 = T.triTable[tCase][i+0];
-        const int e1 = T.triTable[tCase][i+1];
-        const int e2 = T.triTable[tCase][i+2];
-        if (vIdx[e0] < 0 || vIdx[e1] < 0 || vIdx[e2] < 0) continue;
-        mesh.indices.push_back((uint32_t)vIdx[e0]);
-        mesh.indices.push_back((uint32_t)vIdx[e1]);
-        mesh.indices.push_back((uint32_t)vIdx[e2]);
+    for (int i = 0; T.triTable[t_case][i] != -1; i += 3) {
+        const int e0 = T.triTable[t_case][i+0];
+        const int e1 = T.triTable[t_case][i+1];
+        const int e2 = T.triTable[t_case][i+2];
+        if (v_idx[e0] < 0 || v_idx[e1] < 0 || v_idx[e2] < 0) continue;
+        mesh.indices.push_back((uint32_t)v_idx[e0]);
+        mesh.indices.push_back((uint32_t)v_idx[e1]);
+        mesh.indices.push_back((uint32_t)v_idx[e2]);
     }
 }
 
