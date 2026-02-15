@@ -36,8 +36,6 @@
 #include <filesystem/directory.h>
 #include <filesystem/path.h>
 
-#include <queue>
-
 
 #ifdef copysign
 #undef copysign
@@ -240,32 +238,6 @@ __global__ void grid_samples_half_to_float(const uint32_t n_elements, BoundingBo
 	// let's interpolate for marching cubes based on the raw MLP output, not the density (exponentiated) version
 	// float mlp = network_to_density(float(network_output[i * padded_output_width]), density_activation);
 	float mlp = float(network_output[i]);
-
-
-	// if (grid_in) {
-	// 	vec3 pos = unwarp_position(coords_in[i].p, aabb);
-	// 	float grid_density = cascaded_grid_at(pos, grid_in, mip_from_pos(pos, max_cascade));
-	// 	if (grid_density < NERF_MIN_OPTICAL_THICKNESS()) {
-	// 		mlp = -10000.0f;
-	// 	}
-	// }
-
-	dst[i] = mlp;
-}
-
-__global__ void grid_samples_half_to_float_activation(const uint32_t n_elements, BoundingBox aabb, float* dst, const network_precision_t* network_output, ENerfActivation density_activation, const NerfPosition* __restrict__ coords_in, const float* __restrict__ grid_in, uint32_t max_cascade, uint32_t padded_output_width) {
-	const uint32_t i = threadIdx.x + blockIdx.x * blockDim.x;
-	if (i >= n_elements) return;
-
-	float mlp = network_to_density(float(network_output[i * padded_output_width]), density_activation);
-
-	// if (grid_in) {
-	// 	vec3 pos = unwarp_position(coords_in[i].p, aabb);
-	// 	float grid_density = cascaded_grid_at(pos, grid_in, mip_from_pos(pos, max_cascade));
-	// 	if (grid_density < NERF_MIN_OPTICAL_THICKNESS()) {
-	// 		mlp = -10000.0f;
-	// 	}
-	// }
 
 	dst[i] = mlp;
 }
@@ -3158,26 +3130,6 @@ int Testbed::marching_cubes(ivec3 res3d, const BoundingBox& aabb, const mat3& re
 	}
 
 	GPUMemory<float> density = get_density_on_grid(res3d, aabb, render_aabb_to_local);
-
-	std::vector<float> density_cpu;
-	density_cpu.resize(density.size());
-	density.copy_to_host(density_cpu);
-
-	float min = 10e8;
-	float max = -10e8;
-	float avg = 0.0f;
-	float count = 0.0f;
-
-	for (auto val : density_cpu) {
-		if (val < -9999.0f) continue;
-		min = std::min(min, val);
-		max = std::max(max, val);
-		avg += val;
-		count++;
-	}
-	avg /= count;
-	std::cout << fmt::format("Min: {} Max: {} Avg: {}", min, max, avg);
-
 	marching_cubes_gpu(m_stream.get(), aabb, render_aabb_to_local, res3d, thresh, density, m_mesh.verts, m_mesh.indices);
 
 	uint32_t n_verts = (uint32_t)m_mesh.verts.size();

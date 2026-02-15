@@ -86,11 +86,11 @@ vec3 vertex_interp(float iso, vec3 p1, vec3 p2, float d1, float d2);
 struct MCMesh {
 	std::vector<vec3> vertices;
 	std::vector<unsigned int> indices;
-	CPUHash64 mcEdgeCache;
-	CPUHash64 faceEdgeCache;
+	CPUHash64 edge_cache;
+	CPUHash64 face_cache;
 
-	vec3   base_origin = {0,0,0};
-    float  base_h      = 1.0f; 
+	vec3 base_origin = {0.0f, 0.0f, 0.0f};
+    float base_h = 1.0f; 
 
     uint32_t add_vertex(const vec3& p) {
         uint32_t id = (uint32_t)vertices.size();
@@ -101,10 +101,11 @@ struct MCMesh {
 
 enum class Face {PX, NX, PY, NY, PZ, NZ};
 
-// Extend with DFS:
-// - sample leaf subspace
-// - construct subtree bottom-up
-// - depending on condition and depth: prune, extend or set min-density and exit
+struct FaceDir {
+	int axis;
+	int dir;
+};
+
 class DensityOctree {
 public:
 	static std::array<vec3, 8> s_corner_offsets;
@@ -112,8 +113,7 @@ public:
 	static std::array<int, 8> s_corner_mapping;
 	static float s_min_density;
 
-  // Node types: corner, leaf, intermediate
-  struct Node {
+	struct Node {
 		vec3 origin;
 		float size;
 
@@ -143,7 +143,7 @@ public:
 		std::vector<std::pair<Node&, Face>> get_neighors_faces();
 		Node* get_face_neighbor(Face f);
 		bool intersects_band(float band, float iso, unsigned int req_num_of_children);
-  };
+	};
 
 	static DensityOctree init(vec3 origin, float size);
 	void build(int res, float min_density, float band, unsigned int req_num_of_children, int max_tree_height, const std::function<std::vector<float>(const vec3& origin, float size)>& get_density_on_grid);
